@@ -1,0 +1,29 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+out/
+release/
+*.tsbuildinfo
+
+# MyIDE runtime data (workspace, builds, verification, trash, backups)
+.myide/
+.myide-workspace/
+
+# Logs
+*.log
+npm-debug.log*
+electron-log/
+
+# Environment / secrets (API keys live in the OS keychain, never in the repo)
+.env
+.env.*
+*.enc
+
+# OS / editor noise
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/*
+!.vscode/extensions.json

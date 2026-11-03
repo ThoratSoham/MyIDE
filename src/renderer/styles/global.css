@@ -1,0 +1,70 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+
+body {
+  margin: 0;
+  background: var(--color-base);
+  color: var(--color-text);
+  overflow: hidden;
+}
+
+/* Theme tokens so the whole UI follows the active theme without JS repaints. */
+:root[data-theme="light"] {
+  --color-base: #ffffff;
+  --color-surface: #f6f7f9;
+  --color-surface-alt: #eef0f2;
+  --color-border: #d6d8dc;
+  --color-text: #1a1c20;
+  --color-muted: #626670;
+  --color-accent: #3b82f6;
+  --color-accent-strong: #1d4ed8;
+  --color-positive: #16a34a;
+  --color-warn: #d97706;
+  --color-negative: #dc2626;
+  --editor-bg: #ffffff;
+}
+
+:root[data-theme="dark"] {
+  --color-base: #0e1014;
+  --color-surface: #161a22;
+  --color-surface-alt: #1f2430;
+  --color-border: #2b3142;
+  --color-text: #e6e8ec;
+  --color-muted: #9aa0ad;
+  --color-accent: #60a5fa;
+  --color-accent-strong: #93bbfc;
+  --color-positive: #4ade80;
+  --color-warn: #fbbf24;
+  --color-negative: #f87171;
+  --editor-bg: #1a1c22;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+/* Monaca editor needs explicit height from the parent. */
+.editor-wrap {
+  height: 100%;
+  width: 100%;
+}
+
+/* Focus styles for keyboard users (FR-12 / accessibility). */
+:focus-visible {
+  outline: 2px solid var(--color-accent-strong);
+  outline-offset: 1px;
+}
+
+/* Smooth, small transitions for a premium-feeling UI. */
+button,
+input,
+.panel,
+.tabs,
+.tab {
+  transition: background-color 120ms ease, border-color 120ms ease, color 120ms ease;
+}

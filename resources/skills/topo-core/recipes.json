@@ -1,0 +1,24 @@
+{
+  "recipes": [
+    {
+      "id": "contour-marching-squares",
+      "name": "Contour marching squares",
+      "description": "Derives contour lines from a scalar field using the marching squares algorithm, then strokes them with the accent token. Produces topographic rings around peaks in the data."
+    },
+    {
+      "id": "draw-in",
+      "name": "Draw in",
+      "description": "Contours are revealed along their own length, so each line appears to be drawn from start to end as the section enters view. Uses stroke dash offset and stays visible when motion is reduced."
+    },
+    {
+      "id": "parallax",
+      "name": "Parallax layers",
+      "description": "Separates contour bands into two or three depth layers that shift at different rates on scroll, giving the map a sense of elevation without any 3D renderer."
+    },
+    {
+      "id": "elevation-sweep",
+      "name": "Elevation sweep",
+      "description": "A moving threshold recolours contours as it passes, so bands light up in sequence from low to high elevation. Ties directly to a scroll or time-driven progress value."
+    }
+  ]
+}

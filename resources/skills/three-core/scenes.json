@@ -1,0 +1,34 @@
+{
+  "scenes": [
+    {
+      "id": "particles",
+      "name": "Particle field",
+      "description": "A drifting cloud of points on one shared canvas. Density, drift speed and accent colour are driven by tokens, so the scene reads as ambient depth behind hero or CTA copy."
+    },
+    {
+      "id": "floating-shapes",
+      "name": "Floating shapes",
+      "description": "A small set of low-poly primitives that rotate slowly and bob on independent offsets. Suited to feature or process sections that benefit from a calm, spatial backdrop."
+    },
+    {
+      "id": "molecules",
+      "name": "Molecule graph",
+      "description": "Nodes linked by edges, with gentle spring motion between them. Uses the accent token for nodes and the border token for bonds to explain connected or networked ideas."
+    },
+    {
+      "id": "cross-section",
+      "name": "Cross section",
+      "description": "A layered solid sliced on a plane so the internal structure is visible. Highlights an inner layer with the accent token, useful for explaining what is inside a system."
+    },
+    {
+      "id": "flow-along-curve",
+      "name": "Flow along a curve",
+      "description": "Particles travelling along a defined spline from start to end, with speed and loop count configurable. Reads as a pipeline, journey or data flow."
+    },
+    {
+      "id": "glow",
+      "name": "Glow",
+      "description": "A soft emissive object with a large falloff and a slow pulse. Kept low contrast so foreground headings built from the type scale stay fully readable."
+    }
+  ]
+}

@@ -1,0 +1,184 @@
+{
+  "sections": [
+    {
+      "id": "navbar.a",
+      "type": "navbar",
+      "variant": "A",
+      "html": "<header class=\"nav\" aria-label=\"Primary navigation\">\n  <nav class=\"nav__inner container\">\n    <a class=\"nav__brand\" href=\"#main\">{{brand}}</a>\n    <ul class=\"nav__links\">\n      {{#items}}<li><a class=\"nav__link\" href=\"{{href}}\">{{label}}</a></li>{{/items}}\n    </ul>\n    <a class=\"btn btn--primary\" href=\"{{ctaHref}}\">{{ctaLabel}}</a>\n  </nav>\n</header>"
+    },
+    {
+      "id": "navbar.b",
+      "type": "navbar",
+      "variant": "B",
+      "html": "<header class=\"nav\" aria-label=\"Primary navigation\">\n  <nav class=\"nav__inner container\">\n    <a class=\"nav__brand\" href=\"#main\">\n      <span>{{brand}}</span>\n      <span class=\"small muted\">{{tagline}}</span>\n    </a>\n    <ul class=\"nav__links\">\n      {{#items}}<li><a class=\"nav__link\" href=\"{{href}}\">{{label}}</a></li>{{/items}}\n    </ul>\n    <a class=\"btn btn--ghost\" href=\"{{secondaryHref}}\">{{secondaryLabel}}</a>\n  </nav>\n</header>"
+    },
+    {
+      "id": "hero.a",
+      "type": "hero",
+      "variant": "A",
+      "html": "<section id=\"main\" class=\"hero\" aria-labelledby=\"hero-title-a\" data-recipe=\"fade-up\">\n  <div class=\"hero__inner container\">\n    <div class=\"hero__copy stack\">\n      <p class=\"eyebrow\">{{eyebrow}}</p>\n      <h1 id=\"hero-title-a\" class=\"h1\" data-recipe=\"text-reveal\">{{heading}}</h1>\n      <p class=\"lead\">{{sub}}</p>\n      <p class=\"muted\">{{body}}</p>\n      <div class=\"row\">\n        <a class=\"btn btn--primary\" href=\"{{ctaHref}}\">{{ctaLabel}}</a>\n        <a class=\"btn btn--ghost\" href=\"{{secondaryHref}}\">{{secondaryLabel}}</a>\n      </div>\n    </div>\n    <div class=\"hero__media\">\n      <div class=\"media\" role=\"img\" aria-label=\"{{imageAlt}}\"></div>\n    </div>\n  </div>\n</section>"
+    },
+    {
+      "id": "hero.b",
+      "type": "hero",
+      "variant": "B",
+      "html": "<section id=\"main\" class=\"hero\" aria-labelledby=\"hero-title-b\">\n  <div class=\"hero__inner container\">\n    <div class=\"hero__copy stack center\" data-recipe=\"fade-up\">\n      <p class=\"eyebrow\">{{eyebrow}}</p>\n      <h1 id=\"hero-title-b\" class=\"h1\" data-recipe=\"text-reveal\">{{heading}}</h1>\n      <p class=\"lead muted\">{{sub}}</p>\n      <p class=\"muted\">{{body}}</p>\n      <div class=\"row\">\n        <a class=\"btn btn--primary\" href=\"{{ctaHref}}\">{{ctaLabel}}</a>\n        <a class=\"btn btn--ghost\" href=\"{{secondaryHref}}\">{{secondaryLabel}}</a>\n      </div>\n    </div>\n    <div class=\"hero__media\">\n      <div class=\"media media--square\" role=\"img\" aria-label=\"{{imageAlt}}\"></div>\n    </div>\n  </div>\n</section>"
+    },
+    {
+      "id": "logostrip.a",
+      "type": "logostrip",
+      "variant": "A",
+      "html": "<section class=\"section section--alt\" aria-label=\"Organisations we work with\">\n  <div class=\"container stack\">\n    <p class=\"eyebrow center\">{{eyebrow}}</p>\n    <div class=\"logo-strip\" data-recipe=\"fade-up\">\n      {{#items}}<div class=\"logo-strip__item\">{{name}}</div>{{/items}}\n    </div>\n  </div>\n</section>"
+    },
+    {
+      "id": "logostrip.b",
+      "type": "logostrip",
+      "variant": "B",
+      "html": "<section class=\"section\" aria-labelledby=\"logo-title-b\">\n  <div class=\"container stack center\">\n    <p class=\"eyebrow\">{{eyebrow}}</p>\n    <h2 id=\"logo-title-b\" class=\"h2\" data-recipe=\"fade-up\">{{heading}}</h2>\n    <p class=\"muted\">{{sub}}</p>\n    <div class=\"logo-strip\" data-recipe=\"fade-up\">\n      {{#items}}<div class=\"logo-strip__item\">{{name}}</div>{{/items}}\n    </div>\n  </div>\n</section>"
+    },
+    {
+      "id": "features.a",
+      "type": "features",
+      "variant": "A",
+      "html": "<section class=\"section\" aria-labelledby=\"features-title-a\">\n  <div class=\"container stack\">\n    <div class=\"stack\" data-recipe=\"fade-up\">\n      <p class=\"eyebrow\">{{eyebrow}}</p>\n      <h2 id=\"features-title-a\" class=\"h2\">{{heading}}</h2>\n      <p class=\"lead muted\">{{sub}}</p>\n    </div>\n    <div class=\"grid grid--3\" data-recipe=\"stagger\">\n      {{#items}}<article class=\"card stack\">\n        <svg aria-hidden=\"true\" width=\"24\" height=\"24\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\"><path d=\"M12 3v18M3 12h18\"/></svg>\n        <h3 class=\"h4\">{{title}}</h3>\n        <p class=\"muted\">{{text}}</p>\n      </article>{{/items}}\n    </div>\n  </div>\n</section>"
+    },
+    {
+      "id": "features.b",
+      "type": "features",
+      "variant": "B",
+      "html": "<section class=\"section section--alt\" aria-labelledby=\"features-title-b\">\n  <div class=\"container stack\">\n    <div class=\"stack\" data-recipe=\"fade-up\">\n      <p class=\"eyebrow\">{{eyebrow}}</p>\n      <h2 id=\"features-title-b\" class=\"h2\">{{heading}}</h2>\n      <p class=\"muted\">{{sub}}</p>\n    </div>\n    <div class=\"grid grid--2\" data-recipe=\"stagger\">\n      {{#items}}<article class=\"card stack\">\n        <div class=\"thumb\" role=\"img\" aria-label=\"{{alt}}\"></div>\n        <h3 class=\"h4\">{{title}}</h3>\n        <p class=\"muted\">{{text}}</p>\n      </article>{{/items}}\n    </div>\n  </div>\n</section>"
+    },
+    {
+      "id": "stats.a",
+      "type": "stats",
+      "variant": "A",
+      "html": "<section class=\"section\" aria-labelledby=\"stats-title-a\">\n  <div class=\"container stack center\">\n    <p class=\"eyebrow\">{{eyebrow}}</p>\n    <h2 id=\"stats-title-a\" class=\"h2\" data-recipe=\"fade-up\">{{heading}}</h2>\n    <div class=\"grid grid--4\" data-recipe=\"stagger\">\n      {{#items}}<div class=\"card stat\">\n        <span class=\"stat__value\" data-recipe=\"count-up\">{{value}}</span>\n        <span class=\"stat__label\">{{label}}</span>\n      </div>{{/items}}\n    </div>\n  </div>\n</section>"
+    },
+    {
+      "id": "stats.b",
+      "type": "stats",
+      "variant": "B",
+      "html": "<section class=\"section section--alt\" aria-labelledby=\"stats-title-b\">\n  <div class=\"container stack\">\n    <div class=\"stack\" data-recipe=\"fade-up\">\n      <p class=\"eyebrow\">{{eyebrow}}</p>\n      <h2 id=\"stats-title-b\" class=\"h2\">{{heading}}</h2>\n      <p class=\"muted\">{{sub}}</p>\n    </div>\n    <div class=\"grid grid--3\" data-recipe=\"stagger\">\n      {{#items}}<div class=\"stat\">\n        <span class=\"stat__value\" data-recipe=\"count-up\">{{value}}</span>\n        <span class=\"stat__label\">{{label}}</span>\n      </div>{{/items}}\n    </div>\n  </div>\n</section>"
+    },
+    {
+      "id": "process.a",
+      "type": "process",
+      "variant": "A",
+      "html": "<section class=\"section\" aria-labelledby=\"process-title-a\">\n  <div class=\"container stack\">\n    <div class=\"stack\" data-recipe=\"fade-up\">\n      <p class=\"eyebrow\">{{eyebrow}}</p>\n      <h2 id=\"process-title-a\" class=\"h2\">{{heading}}</h2>\n      <p class=\"lead muted\">{{sub}}</p>\n    </div>\n    <div class=\"grid grid--4\" data-recipe=\"stagger\">\n      {{#items}}<article class=\"card stack\">\n        <svg aria-hidden=\"true\" width=\"24\" height=\"24\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\"><path d=\"M5 12h14M13 6l6 6-6 6\"/></svg>\n        <h3 class=\"h4\">{{title}}</h3>\n        <p class=\"muted\">{{text}}</p>\n      </article>{{/items}}\n    </div>\n  </div>\n</section>"
+    },
+    {
+      "id": "process.b",
+      "type": "process",
+      "variant": "B",
+      "html": "<section class=\"section section--alt\" aria-labelledby=\"process-title-b\">\n  <div class=\"container stack\">\n    <div class=\"stack\" data-recipe=\"fade-up\">\n      <p class=\"eyebrow\">{{eyebrow}}</p>\n      <h2 id=\"process-title-b\" class=\"h2\">{{heading}}</h2>\n      <p class=\"muted\">{{sub}}</p>\n    </div>\n    <div class=\"grid grid--2\" data-recipe=\"stagger\">\n      {{#items}}<article class=\"card stack\">\n        <span class=\"badge\">Step</span>\n        <h3 class=\"h4\">{{title}}</h3>\n        <p class=\"muted\">{{text}}</p>\n      </article>{{/items}}\n    </div>\n  </div>\n</section>"
+    },
+    {
+      "id": "services.a",
+      "type": "services",
+      "variant": "A",
+      "html": "<section class=\"section\" aria-labelledby=\"services-title-a\">\n  <div class=\"container stack\">\n    <div class=\"stack\" data-recipe=\"fade-up\">\n      <p class=\"eyebrow\">{{eyebrow}}</p>\n      <h2 id=\"services-title-a\" class=\"h2\">{{heading}}</h2>\n      <p class=\"lead muted\">{{sub}}</p>\n    </div>\n    <div class=\"grid grid--3\" data-recipe=\"stagger\">\n      {{#items}}<article class=\"card stack\">\n        <svg aria-hidden=\"true\" width=\"24\" height=\"24\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\"><path d=\"M4 7h16M4 12h16M4 17h10\"/></svg>\n        <h3 class=\"h4\">{{title}}</h3>\n        <p class=\"muted\">{{text}}</p>\n      </article>{{/items}}\n    </div>\n  </div>\n</section>"
+    },
+    {
+      "id": "services.b",
+      "type": "services",
+      "variant": "B",
+      "html": "<section class=\"section section--alt\" aria-labelledby=\"services-title-b\">\n  <div class=\"container stack\">\n    <div class=\"stack\" data-recipe=\"fade-up\">\n      <p class=\"eyebrow\">{{eyebrow}}</p>\n      <h2 id=\"services-title-b\" class=\"h2\">{{heading}}</h2>\n      <p class=\"muted\">{{sub}}</p>\n    </div>\n    <div class=\"grid grid--2\" data-recipe=\"stagger\">\n      {{#items}}<article class=\"card stack\">\n        <div class=\"media\" role=\"img\" aria-label=\"{{alt}}\"></div>\n        <h3 class=\"h4\">{{title}}</h3>\n        <p class=\"muted\">{{text}}</p>\n      </article>{{/items}}\n    </div>\n  </div>\n</section>"
+    },
+    {
+      "id": "pricing.a",
+      "type": "pricing",
+      "variant": "A",
+      "html": "<section class=\"section\" aria-labelledby=\"pricing-title-a\">\n  <div class=\"container stack\">\n    <div class=\"stack center\" data-recipe=\"fade-up\">\n      <p class=\"eyebrow\">{{eyebrow}}</p>\n      <h2 id=\"pricing-title-a\" class=\"h2\">{{heading}}</h2>\n      <p class=\"lead muted\">{{sub}}</p>\n    </div>\n    <div class=\"grid grid--3\" data-recipe=\"stagger\">\n      {{#items}}<article class=\"card price\">\n        <h3 class=\"h3\">{{name}}</h3>\n        <p><span class=\"price__value\">{{price}}</span> <span class=\"price__period\">{{period}}</span></p>\n        <ul class=\"price__features\">{{#features}}<li>{{text}}</li>{{/features}}</ul>\n        <a class=\"btn btn--primary\" href=\"{{ctaHref}}\">{{ctaLabel}}</a>\n      </article>{{/items}}\n    </div>\n  </div>\n</section>"
+    },
+    {
+      "id": "pricing.b",
+      "type": "pricing",
+      "variant": "B",
+      "html": "<section class=\"section section--alt\" aria-labelledby=\"pricing-title-b\">\n  <div class=\"container stack\">\n    <div class=\"stack center\" data-recipe=\"fade-up\">\n      <p class=\"eyebrow\">{{eyebrow}}</p>\n      <h2 id=\"pricing-title-b\" class=\"h2\">{{heading}}</h2>\n      <p class=\"lead muted\">{{sub}}</p>\n    </div>\n    <div class=\"grid grid--2\" data-recipe=\"stagger\">\n      {{#items}}<article class=\"card price\">\n        <h3 class=\"h3\">{{name}}</h3>\n        <p><span class=\"price__value\">{{price}}</span> <span class=\"price__period\">{{period}}</span></p>\n        <ul class=\"price__features\">{{#features}}<li>{{text}}</li>{{/features}}</ul>\n        <a class=\"btn btn--ghost\" href=\"{{ctaHref}}\">{{ctaLabel}}</a>\n      </article>{{/items}}\n    </div>\n  </div>\n</section>"
+    },
+    {
+      "id": "testimonials.a",
+      "type": "testimonials",
+      "variant": "A",
+      "html": "<section class=\"section\" aria-labelledby=\"testimonials-title-a\">\n  <div class=\"container stack\">\n    <div class=\"stack center\" data-recipe=\"fade-up\">\n      <p class=\"eyebrow\">{{eyebrow}}</p>\n      <h2 id=\"testimonials-title-a\" class=\"h2\">{{heading}}</h2>\n      <p class=\"muted\">{{sub}}</p>\n    </div>\n    <div class=\"grid grid--3\" data-recipe=\"stagger\">\n      {{#items}}<figure class=\"card quote\">\n        <blockquote class=\"quote__text\">{{quote}}</blockquote>\n        <figcaption class=\"quote__author\">{{name}}, {{role}}</figcaption>\n      </figure>{{/items}}\n    </div>\n  </div>\n</section>"
+    },
+    {
+      "id": "testimonials.b",
+      "type": "testimonials",
+      "variant": "B",
+      "html": "<section class=\"section section--alt\" aria-labelledby=\"testimonials-title-b\">\n  <div class=\"container stack\">\n    <div class=\"stack center\" data-recipe=\"fade-up\">\n      <p class=\"eyebrow\">{{eyebrow}}</p>\n      <h2 id=\"testimonials-title-b\" class=\"h2\">{{heading}}</h2>\n    </div>\n    <div class=\"grid grid--2\" data-recipe=\"stagger\">\n      {{#items}}<figure class=\"card quote\">\n        <blockquote class=\"quote__text\">{{quote}}</blockquote>\n        <figcaption class=\"quote__author\">{{name}} - {{role}}</figcaption>\n      </figure>{{/items}}\n    </div>\n  </div>\n</section>"
+    },
+    {
+      "id": "team.a",
+      "type": "team",
+      "variant": "A",
+      "html": "<section class=\"section\" aria-labelledby=\"team-title-a\">\n  <div class=\"container stack\">\n    <div class=\"stack center\" data-recipe=\"fade-up\">\n      <p class=\"eyebrow\">{{eyebrow}}</p>\n      <h2 id=\"team-title-a\" class=\"h2\">{{heading}}</h2>\n      <p class=\"muted\">{{sub}}</p>\n    </div>\n    <div class=\"grid grid--4\" data-recipe=\"stagger\">\n      {{#items}}<article class=\"card stack center\">\n        <div class=\"thumb\" role=\"img\" aria-label=\"{{alt}}\"></div>\n        <h3 class=\"h4\">{{name}}</h3>\n        <p class=\"small muted\">{{role}}</p>\n      </article>{{/items}}\n    </div>\n  </div>\n</section>"
+    },
+    {
+      "id": "team.b",
+      "type": "team",
+      "variant": "B",
+      "html": "<section class=\"section section--alt\" aria-labelledby=\"team-title-b\">\n  <div class=\"container stack\">\n    <div class=\"stack\" data-recipe=\"fade-up\">\n      <p class=\"eyebrow\">{{eyebrow}}</p>\n      <h2 id=\"team-title-b\" class=\"h2\">{{heading}}</h2>\n      <p class=\"lead muted\">{{sub}}</p>\n    </div>\n    <div class=\"grid grid--3\" data-recipe=\"stagger\">\n      {{#items}}<article class=\"card stack\">\n        <div class=\"thumb\" role=\"img\" aria-label=\"{{alt}}\"></div>\n        <h3 class=\"h4\">{{name}}</h3>\n        <p class=\"small muted\">{{role}}</p>\n      </article>{{/items}}\n    </div>\n  </div>\n</section>"
+    },
+    {
+      "id": "gallery.a",
+      "type": "gallery",
+      "variant": "A",
+      "html": "<section class=\"section\" aria-labelledby=\"gallery-title-a\">\n  <div class=\"container stack\">\n    <div class=\"stack center\" data-recipe=\"fade-up\">\n      <p class=\"eyebrow\">{{eyebrow}}</p>\n      <h2 id=\"gallery-title-a\" class=\"h2\">{{heading}}</h2>\n      <p class=\"muted\">{{sub}}</p>\n    </div>\n    <div class=\"grid grid--3\" data-recipe=\"stagger\">\n      {{#items}}<div class=\"thumb\" role=\"img\" aria-label=\"{{alt}}\"></div>{{/items}}\n    </div>\n  </div>\n</section>"
+    },
+    {
+      "id": "gallery.b",
+      "type": "gallery",
+      "variant": "B",
+      "html": "<section class=\"section section--alt\" aria-labelledby=\"gallery-title-b\">\n  <div class=\"container stack\">\n    <div class=\"stack\" data-recipe=\"fade-up\">\n      <p class=\"eyebrow\">{{eyebrow}}</p>\n      <h2 id=\"gallery-title-b\" class=\"h2\">{{heading}}</h2>\n      <p class=\"muted\">{{sub}}</p>\n    </div>\n    <div class=\"grid grid--4\" data-recipe=\"stagger\">\n      {{#items}}<div class=\"thumb\" role=\"img\" aria-label=\"{{alt}}\"></div>{{/items}}\n    </div>\n  </div>\n</section>"
+    },
+    {
+      "id": "faq.a",
+      "type": "faq",
+      "variant": "A",
+      "html": "<section class=\"section\" aria-labelledby=\"faq-title-a\">\n  <div class=\"container stack\">\n    <div class=\"stack center\" data-recipe=\"fade-up\">\n      <p class=\"eyebrow\">{{eyebrow}}</p>\n      <h2 id=\"faq-title-a\" class=\"h2\">{{heading}}</h2>\n      <p class=\"lead muted\">{{sub}}</p>\n    </div>\n    <div class=\"faq\" data-recipe=\"fade-up\">\n      {{#items}}<details class=\"faq__item\">\n        <summary class=\"faq__q\">{{q}}</summary>\n        <p class=\"faq__a\">{{a}}</p>\n      </details>{{/items}}\n    </div>\n  </div>\n</section>"
+    },
+    {
+      "id": "faq.b",
+      "type": "faq",
+      "variant": "B",
+      "html": "<section class=\"section section--alt\" aria-labelledby=\"faq-title-b\">\n  <div class=\"container stack\">\n    <div class=\"stack\" data-recipe=\"fade-up\">\n      <p class=\"eyebrow\">{{eyebrow}}</p>\n      <h2 id=\"faq-title-b\" class=\"h2\">{{heading}}</h2>\n      <p class=\"muted\">{{sub}}</p>\n    </div>\n    <div class=\"faq\" data-recipe=\"fade-up\">\n      {{#items}}<div class=\"faq__item\">\n        <h3 class=\"faq__q\">{{q}}</h3>\n        <p class=\"faq__a\">{{a}}</p>\n      </div>{{/items}}\n    </div>\n  </div>\n</section>"
+    },
+    {
+      "id": "cta.a",
+      "type": "cta",
+      "variant": "A",
+      "html": "<section class=\"section\" aria-labelledby=\"cta-title-a\">\n  <div class=\"container\">\n    <div class=\"card stack center\" data-recipe=\"fade-up\">\n      <p class=\"eyebrow\">{{eyebrow}}</p>\n      <h2 id=\"cta-title-a\" class=\"h2\">{{heading}}</h2>\n      <p class=\"lead muted\">{{sub}}</p>\n      <div class=\"row\">\n        <a class=\"btn btn--primary\" href=\"{{ctaHref}}\">{{ctaLabel}}</a>\n        <a class=\"btn btn--ghost\" href=\"{{secondaryHref}}\">{{secondaryLabel}}</a>\n      </div>\n    </div>\n  </div>\n</section>"
+    },
+    {
+      "id": "cta.b",
+      "type": "cta",
+      "variant": "B",
+      "html": "<section class=\"section section--alt\" aria-labelledby=\"cta-title-b\">\n  <div class=\"container\">\n    <div class=\"card\" data-recipe=\"fade-up\">\n      <div class=\"row\">\n        <div class=\"stack\">\n          <h2 id=\"cta-title-b\" class=\"h2\">{{heading}}</h2>\n          <p class=\"muted\">{{sub}}</p>\n        </div>\n        <div class=\"row\">\n          <a class=\"btn btn--primary\" href=\"{{ctaHref}}\">{{ctaLabel}}</a>\n        </div>\n      </div>\n    </div>\n  </div>\n</section>"
+    },
+    {
+      "id": "contact.a",
+      "type": "contact",
+      "variant": "A",
+      "html": "<section class=\"section\" aria-labelledby=\"contact-title-a\">\n  <div class=\"container stack\">\n    <div class=\"stack\" data-recipe=\"fade-up\">\n      <p class=\"eyebrow\">{{eyebrow}}</p>\n      <h2 id=\"contact-title-a\" class=\"h2\">{{heading}}</h2>\n      <p class=\"lead muted\">{{sub}}</p>\n    </div>\n    <div class=\"grid grid--2\">\n      <form class=\"card stack\" data-recipe=\"fade-up\">\n        <h3 class=\"h4\">{{formTitle}}</h3>\n        <div class=\"field\">\n          <label class=\"label\" for=\"contact-name-a\">Full name</label>\n          <input class=\"input\" id=\"contact-name-a\" name=\"name\" type=\"text\" autocomplete=\"name\" />\n        </div>\n        <div class=\"field\">\n          <label class=\"label\" for=\"contact-email-a\">Email address</label>\n          <input class=\"input\" id=\"contact-email-a\" name=\"email\" type=\"email\" autocomplete=\"email\" />\n        </div>\n        <div class=\"field\">\n          <label class=\"label\" for=\"contact-message-a\">How can we help</label>\n          <textarea class=\"textarea\" id=\"contact-message-a\" name=\"message\"></textarea>\n        </div>\n        <button class=\"btn btn--primary\" type=\"submit\">{{ctaLabel}}</button>\n        <p class=\"small muted\">{{formNote}}</p>\n      </form>\n      <div class=\"stack\" data-recipe=\"fade-up\">\n        <div class=\"card stack\">\n          <h3 class=\"h4\">{{brand}}</h3>\n          <p class=\"muted\">{{address}}</p>\n        </div>\n        <div class=\"card stack\">\n          <a class=\"nav__link\" href=\"mailto:{{email}}\">{{email}}</a>\n          <a class=\"nav__link\" href=\"tel:{{phone}}\">{{phone}}</a>\n        </div>\n      </div>\n    </div>\n  </div>\n</section>"
+    },
+    {
+      "id": "contact.b",
+      "type": "contact",
+      "variant": "B",
+      "html": "<section class=\"section section--alt\" aria-labelledby=\"contact-title-b\">\n  <div class=\"container\">\n    <div class=\"card stack center\" data-recipe=\"fade-up\">\n      <p class=\"eyebrow\">{{eyebrow}}</p>\n      <h2 id=\"contact-title-b\" class=\"h2\">{{heading}}</h2>\n      <p class=\"lead muted\">{{sub}}</p>\n      <form class=\"stack\">\n        <div class=\"field\">\n          <label class=\"label\" for=\"contact-name-b\">Full name</label>\n          <input class=\"input\" id=\"contact-name-b\" name=\"name\" type=\"text\" autocomplete=\"name\" />\n        </div>\n        <div class=\"field\">\n          <label class=\"label\" for=\"contact-email-b\">Email address</label>\n          <input class=\"input\" id=\"contact-email-b\" name=\"email\" type=\"email\" autocomplete=\"email\" />\n        </div>\n        <div class=\"field\">\n          <label class=\"label\" for=\"contact-message-b\">How can we help</label>\n          <textarea class=\"textarea\" id=\"contact-message-b\" name=\"message\"></textarea>\n        </div>\n        <button class=\"btn btn--primary\" type=\"submit\">{{ctaLabel}}</button>\n      </form>\n      <p class=\"small muted\">{{formNote}}</p>\n    </div>\n  </div>\n</section>"
+    },
+    {
+      "id": "footer.a",
+      "type": "footer",
+      "variant": "A",
+      "html": "<footer class=\"footer\" aria-label=\"Site footer\">\n  <div class=\"container footer__cols\">\n    <div class=\"footer__col\">\n      <span class=\"nav__brand\">{{brand}}</span>\n      <p class=\"small muted\">{{tagline}}</p>\n    </div>\n    {{#columns}}<div class=\"footer__col\">\n      <h2 class=\"h4\">{{title}}</h2>\n      {{#links}}<a href=\"{{href}}\">{{label}}</a>{{/links}}\n    </div>{{/columns}}\n  </div>\n  <div class=\"container\">\n    <p class=\"small muted\">{{copyright}}</p>\n  </div>\n</footer>"
+    },
+    {
+      "id": "footer.b",
+      "type": "footer",
+      "variant": "B",
+      "html": "<footer class=\"footer\" aria-label=\"Site footer\">\n  <div class=\"container footer__cols\">\n    <div class=\"footer__col\">\n      <span class=\"nav__brand\">{{brand}}</span>\n      <p class=\"small muted\">{{tagline}}</p>\n      <p class=\"small muted\">{{address}}</p>\n    </div>\n    {{#columns}}<div class=\"footer__col\">\n      <h2 class=\"h4\">{{title}}</h2>\n      {{#links}}<a href=\"{{href}}\">{{label}}</a>{{/links}}\n    </div>{{/columns}}\n    <div class=\"footer__col\">\n      <h2 class=\"h4\">Contact</h2>\n      <a href=\"mailto:{{email}}\">{{email}}</a>\n      <a href=\"tel:{{phone}}\">{{phone}}</a>\n    </div>\n  </div>\n  <div class=\"container\">\n    <p class=\"small muted\">{{copyright}}</p>\n  </div>\n</footer>"
+    }
+  ]
+}

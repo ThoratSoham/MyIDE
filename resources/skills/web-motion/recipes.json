@@ -1,0 +1,108 @@
+{
+  "recipes": [
+    {
+      "id": "fade-up",
+      "name": "Fade up",
+      "css": "html.js-motion [data-recipe=\"fade-up\"] {\n  opacity: 0;\n  transform: translateY(16px);\n}\nhtml.js-motion [data-recipe=\"fade-up\"].is-in {\n  opacity: 1;\n  transform: none;\n  transition: opacity .6s ease, transform .6s ease;\n}\n@media (prefers-reduced-motion: reduce) {\n  html.js-motion [data-recipe=\"fade-up\"] {\n    opacity: 1 !important;\n    transform: none !important;\n    transition: none !important;\n  }\n}",
+      "js": "(function () {\n  if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;\n  document.documentElement.classList.add('js-motion');\n  var els = document.querySelectorAll('[data-recipe=\"fade-up\"]');\n  if (!els.length || !('IntersectionObserver' in window)) return;\n  var io = new IntersectionObserver(function (entries) {\n    entries.forEach(function (e) {\n      if (e.isIntersecting) { e.target.classList.add('is-in'); io.unobserve(e.target); }\n    });\n  }, { threshold: 0.15 });\n  els.forEach(function (el) { io.observe(el); });\n})();",
+      "reducedMotionSafe": true,
+      "noJsFallback": true
+    },
+    {
+      "id": "stagger",
+      "name": "Stagger",
+      "css": "html.js-motion [data-recipe=\"stagger\"] > * {\n  opacity: 0;\n  transform: translateY(12px);\n}\nhtml.js-motion [data-recipe=\"stagger\"].is-in > * {\n  opacity: 1;\n  transform: none;\n  transition: opacity .5s ease, transform .5s ease;\n}\nhtml.js-motion [data-recipe=\"stagger\"].is-in > *:nth-child(2) { transition-delay: .06s; }\nhtml.js-motion [data-recipe=\"stagger\"].is-in > *:nth-child(3) { transition-delay: .12s; }\nhtml.js-motion [data-recipe=\"stagger\"].is-in > *:nth-child(4) { transition-delay: .18s; }\nhtml.js-motion [data-recipe=\"stagger\"].is-in > *:nth-child(5) { transition-delay: .24s; }\nhtml.js-motion [data-recipe=\"stagger\"].is-in > *:nth-child(6) { transition-delay: .3s; }\n@media (prefers-reduced-motion: reduce) {\n  html.js-motion [data-recipe=\"stagger\"] > * {\n    opacity: 1 !important;\n    transform: none !important;\n    transition: none !important;\n  }\n}",
+      "js": "(function () {\n  if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;\n  document.documentElement.classList.add('js-motion');\n  var els = document.querySelectorAll('[data-recipe=\"stagger\"]');\n  if (!els.length || !('IntersectionObserver' in window)) return;\n  var io = new IntersectionObserver(function (entries) {\n    entries.forEach(function (e) {\n      if (e.isIntersecting) { e.target.classList.add('is-in'); io.unobserve(e.target); }\n    });\n  }, { threshold: 0.15 });\n  els.forEach(function (el) { io.observe(el); });\n})();",
+      "reducedMotionSafe": true,
+      "noJsFallback": true
+    },
+    {
+      "id": "count-up",
+      "name": "Count up",
+      "css": "html.js-motion [data-recipe=\"count-up\"] {\n  opacity: 0;\n  font-variant-numeric: tabular-nums;\n}\nhtml.js-motion [data-recipe=\"count-up\"].is-in {\n  opacity: 1;\n  transition: opacity .5s ease;\n}\n@media (prefers-reduced-motion: reduce) {\n  html.js-motion [data-recipe=\"count-up\"] {\n    opacity: 1 !important;\n    transition: none !important;\n  }\n}",
+      "js": "(function () {\n  if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;\n  document.documentElement.classList.add('js-motion');\n  var els = document.querySelectorAll('[data-recipe=\"count-up\"]');\n  if (!els.length || !('IntersectionObserver' in window)) return;\n  var io = new IntersectionObserver(function (entries) {\n    entries.forEach(function (e) {\n      if (!e.isIntersecting) return;\n      var el = e.target, raw = (el.textContent || '').trim();\n      io.unobserve(el); el.classList.add('is-in');\n      var num = parseFloat(raw.replace(/[^0-9.]/g, ''));\n      if (!isFinite(num)) return;\n      var suffix = raw.replace(/[0-9.,]/g, '').trim();\n      var start = performance.now();\n      var step = function (now) {\n        var p = Math.min((now - start) / 900, 1);\n        el.textContent = Math.round(num * p).toLocaleString() + suffix;\n        if (p < 1) requestAnimationFrame(step);\n      };\n      requestAnimationFrame(step);\n    });\n  }, { threshold: 0.4 });\n  els.forEach(function (el) { io.observe(el); });\n})();",
+      "reducedMotionSafe": true,
+      "noJsFallback": true
+    },
+    {
+      "id": "text-reveal",
+      "name": "Text reveal",
+      "css": "html.js-motion [data-recipe=\"text-reveal\"] {\n  opacity: 0;\n  clip-path: inset(0 0 100% 0);\n}\nhtml.js-motion [data-recipe=\"text-reveal\"].is-in {\n  opacity: 1;\n  clip-path: inset(0 0 0 0);\n  transition: opacity .6s ease, clip-path .7s ease;\n}\n@media (prefers-reduced-motion: reduce) {\n  html.js-motion [data-recipe=\"text-reveal\"] {\n    opacity: 1 !important;\n    clip-path: none !important;\n    transition: none !important;\n  }\n}",
+      "js": "(function () {\n  if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;\n  document.documentElement.classList.add('js-motion');\n  var els = document.querySelectorAll('[data-recipe=\"text-reveal\"]');\n  if (!els.length || !('IntersectionObserver' in window)) return;\n  var io = new IntersectionObserver(function (entries) {\n    entries.forEach(function (e) {\n      if (e.isIntersecting) { e.target.classList.add('is-in'); io.unobserve(e.target); }\n    });\n  }, { threshold: 0.05 });\n  els.forEach(function (el) { io.observe(el); });\n})();",
+      "reducedMotionSafe": true,
+      "noJsFallback": true
+    },
+    {
+      "id": "parallax",
+      "name": "Parallax",
+      "css": "html.js-motion [data-recipe=\"parallax\"] {\n  will-change: transform;\n}\nhtml.js-motion [data-recipe=\"parallax\"].is-in {\n  transition: transform .1s linear;\n}\n@media (prefers-reduced-motion: reduce) {\n  html.js-motion [data-recipe=\"parallax\"] {\n    transform: none !important;\n    transition: none !important;\n  }\n}",
+      "js": "(function () {\n  if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;\n  document.documentElement.classList.add('js-motion');\n  var els = Array.prototype.slice.call(document.querySelectorAll('[data-recipe=\"parallax\"]'));\n  if (!els.length) return;\n  els.forEach(function (el) { el.classList.add('is-in'); });\n  var ticking = false;\n  function update() {\n    ticking = false;\n    els.forEach(function (el) {\n      var r = el.getBoundingClientRect();\n      var mid = r.top + r.height / 2 - window.innerHeight / 2;\n      el.style.transform = 'translateY(' + (-mid * 0.08).toFixed(2) + 'px)';\n    });\n  }\n  function onScroll() { if (!ticking) { ticking = true; requestAnimationFrame(update); } }\n  window.addEventListener('scroll', onScroll, { passive: true });\n  update();\n})();",
+      "reducedMotionSafe": true,
+      "noJsFallback": true
+    },
+    {
+      "id": "gradient-blob",
+      "name": "Gradient blob",
+      "css": "html.js-motion [data-recipe=\"gradient-blob\"] {\n  position: relative;\n  overflow: hidden;\n}\nhtml.js-motion [data-recipe=\"gradient-blob\"]::before {\n  content: '';\n  position: absolute;\n  inset: -20%;\n  background: radial-gradient(closest-side, var(--color-accent), transparent 70%);\n  opacity: 0;\n  filter: blur(40px);\n  transition: opacity .8s ease;\n}\nhtml.js-motion [data-recipe=\"gradient-blob\"].is-in::before {\n  opacity: .5;\n  animation: blob 14s ease-in-out infinite alternate;\n}\n@keyframes blob {\n  from { transform: translate3d(-6%, -4%, 0) scale(1); }\n  to { transform: translate3d(6%, 4%, 0) scale(1.15); }\n}\n@media (prefers-reduced-motion: reduce) {\n  html.js-motion [data-recipe=\"gradient-blob\"]::before {\n    opacity: .4 !important;\n    animation: none !important;\n    transition: none !important;\n  }\n}",
+      "js": "(function () {\n  if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;\n  document.documentElement.classList.add('js-motion');\n  var els = document.querySelectorAll('[data-recipe=\"gradient-blob\"]');\n  if (!els.length || !('IntersectionObserver' in window)) return;\n  var io = new IntersectionObserver(function (entries) {\n    entries.forEach(function (e) {\n      if (e.isIntersecting) { e.target.classList.add('is-in'); io.unobserve(e.target); }\n    });\n  }, { threshold: 0.15 });\n  els.forEach(function (el) { io.observe(el); });\n})();",
+      "reducedMotionSafe": true,
+      "noJsFallback": true
+    },
+    {
+      "id": "marquee",
+      "name": "Marquee",
+      "css": "html.js-motion [data-recipe=\"marquee\"] {\n  overflow: hidden;\n}\nhtml.js-motion [data-recipe=\"marquee\"].is-in > * {\n  display: flex;\n  width: max-content;\n  gap: var(--space-6, 32px);\n  animation: marquee 26s linear infinite;\n}\n@keyframes marquee {\n  from { transform: translateX(0); }\n  to { transform: translateX(-50%); }\n}\n@media (prefers-reduced-motion: reduce) {\n  html.js-motion [data-recipe=\"marquee\"].is-in > * {\n    animation: none !important;\n  }\n}",
+      "js": "(function () {\n  if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;\n  document.documentElement.classList.add('js-motion');\n  var els = document.querySelectorAll('[data-recipe=\"marquee\"]');\n  if (!els.length || !('IntersectionObserver' in window)) return;\n  var io = new IntersectionObserver(function (entries) {\n    entries.forEach(function (e) {\n      e.target.classList.toggle('is-in', e.isIntersecting);\n    });\n  }, { threshold: 0 });\n  els.forEach(function (el) { io.observe(el); });\n})();",
+      "reducedMotionSafe": true,
+      "noJsFallback": true
+    },
+    {
+      "id": "card-tilt",
+      "name": "Card tilt",
+      "css": "html.js-motion [data-recipe=\"card-tilt\"] {\n  transform-style: preserve-3d;\n}\nhtml.js-motion [data-recipe=\"card-tilt\"].is-in {\n  transition: transform .2s ease;\n}\n@media (prefers-reduced-motion: reduce) {\n  html.js-motion [data-recipe=\"card-tilt\"] {\n    transform: none !important;\n    transition: none !important;\n  }\n}",
+      "js": "(function () {\n  if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;\n  document.documentElement.classList.add('js-motion');\n  var els = document.querySelectorAll('[data-recipe=\"card-tilt\"]');\n  if (!els.length) return;\n  els.forEach(function (el) {\n    el.classList.add('is-in');\n    el.addEventListener('mousemove', function (e) {\n      var r = el.getBoundingClientRect();\n      var x = (e.clientX - r.left) / r.width - 0.5;\n      var y = (e.clientY - r.top) / r.height - 0.5;\n      el.style.transform = 'perspective(700px) rotateY(' + (x * 8).toFixed(2) + 'deg) rotateX(' + (-y * 8).toFixed(2) + 'deg)';\n    });\n    el.addEventListener('mouseleave', function () { el.style.transform = ''; });\n  });\n})();",
+      "reducedMotionSafe": true,
+      "noJsFallback": true
+    },
+    {
+      "id": "magnetic-button",
+      "name": "Magnetic button",
+      "css": "html.js-motion [data-recipe=\"magnetic-button\"] {\n  will-change: transform;\n}\nhtml.js-motion [data-recipe=\"magnetic-button\"].is-in {\n  transition: transform .2s ease;\n}\n@media (prefers-reduced-motion: reduce) {\n  html.js-motion [data-recipe=\"magnetic-button\"] {\n    transform: none !important;\n    transition: none !important;\n  }\n}",
+      "js": "(function () {\n  if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;\n  document.documentElement.classList.add('js-motion');\n  var els = document.querySelectorAll('[data-recipe=\"magnetic-button\"]');\n  if (!els.length) return;\n  els.forEach(function (el) {\n    el.classList.add('is-in');\n    el.addEventListener('mousemove', function (e) {\n      var r = el.getBoundingClientRect();\n      var x = (e.clientX - r.left) / r.width - 0.5;\n      var y = (e.clientY - r.top) / r.height - 0.5;\n      el.style.transform = 'translate(' + (x * 8).toFixed(2) + 'px, ' + (y * 8).toFixed(2) + 'px)';\n    });\n    el.addEventListener('mouseleave', function () { el.style.transform = ''; });\n  });\n})();",
+      "reducedMotionSafe": true,
+      "noJsFallback": true
+    },
+    {
+      "id": "scroll-progress",
+      "name": "Scroll progress",
+      "css": "html.js-motion [data-recipe=\"scroll-progress\"] {\n  position: fixed;\n  inset: 0 0 auto 0;\n  height: 3px;\n  width: 100%;\n  transform: scaleX(0);\n  transform-origin: 0 50%;\n  background: var(--color-accent);\n  z-index: 90;\n}\nhtml.js-motion [data-recipe=\"scroll-progress\"].is-in {\n  transition: transform .1s linear;\n}\n@media (prefers-reduced-motion: reduce) {\n  html.js-motion [data-recipe=\"scroll-progress\"] {\n    transition: none !important;\n  }\n}",
+      "js": "(function () {\n  if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;\n  document.documentElement.classList.add('js-motion');\n  var bar = document.querySelector('[data-recipe=\"scroll-progress\"]');\n  if (!bar) return;\n  var ticking = false;\n  function update() {\n    ticking = false;\n    var max = document.documentElement.scrollHeight - window.innerHeight;\n    bar.style.transform = 'scaleX(' + (max > 0 ? window.scrollY / max : 0).toFixed(4) + ')';\n  }\n  function onScroll() { if (!ticking) { ticking = true; requestAnimationFrame(update); } }\n  window.addEventListener('scroll', onScroll, { passive: true });\n  window.addEventListener('resize', onScroll);\n  if ('IntersectionObserver' in window) {\n    new IntersectionObserver(function (es) { es.forEach(function (e) { e.target.classList.toggle('is-in', e.isIntersecting); }); }).observe(bar);\n  }\n  update();\n})();",
+      "reducedMotionSafe": true,
+      "noJsFallback": true
+    },
+    {
+      "id": "sticky-scrub",
+      "name": "Sticky scrub",
+      "css": "html.js-motion [data-recipe=\"sticky-scrub\"] {\n  position: sticky;\n  top: var(--space-6, 32px);\n}\nhtml.js-motion [data-recipe=\"sticky-scrub\"] > * {\n  transform: translateY(calc((1 - var(--scrub, 1)) * 24px));\n}\nhtml.js-motion [data-recipe=\"sticky-scrub\"].is-in > * {\n  transition: transform .1s linear;\n}\n@media (prefers-reduced-motion: reduce) {\n  html.js-motion [data-recipe=\"sticky-scrub\"] {\n    position: static !important;\n  }\n  html.js-motion [data-recipe=\"sticky-scrub\"] > * {\n    transform: none !important;\n    transition: none !important;\n  }\n}",
+      "js": "(function () {\n  if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;\n  document.documentElement.classList.add('js-motion');\n  var els = Array.prototype.slice.call(document.querySelectorAll('[data-recipe=\"sticky-scrub\"]'));\n  if (!els.length) return;\n  var ticking = false;\n  function update() {\n    ticking = false;\n    els.forEach(function (el) {\n      var r = el.getBoundingClientRect();\n      var p = (window.innerHeight - r.top) / (window.innerHeight + r.height);\n      el.style.setProperty('--scrub', Math.min(Math.max(p, 0), 1).toFixed(3));\n      el.classList.add('is-in');\n    });\n  }\n  function onScroll() { if (!ticking) { ticking = true; requestAnimationFrame(update); } }\n  window.addEventListener('scroll', onScroll, { passive: true });\n  update();\n})();",
+      "reducedMotionSafe": true,
+      "noJsFallback": true
+    },
+    {
+      "id": "cursor-glow",
+      "name": "Cursor glow",
+      "css": "html.js-motion [data-recipe=\"cursor-glow\"] {\n  position: relative;\n}\nhtml.js-motion [data-recipe=\"cursor-glow\"]::after {\n  content: '';\n  position: absolute;\n  inset: 0;\n  pointer-events: none;\n  border-radius: inherit;\n  background: radial-gradient(240px circle at var(--mx, 50%) var(--my, 50%), var(--color-accent), transparent 60%);\n  opacity: 0;\n  transition: opacity .3s ease;\n}\nhtml.js-motion [data-recipe=\"cursor-glow\"].is-in::after {\n  opacity: .25;\n}\n@media (prefers-reduced-motion: reduce) {\n  html.js-motion [data-recipe=\"cursor-glow\"]::after {\n    display: none !important;\n  }\n}",
+      "js": "(function () {\n  if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;\n  document.documentElement.classList.add('js-motion');\n  var els = document.querySelectorAll('[data-recipe=\"cursor-glow\"]');\n  if (!els.length) return;\n  els.forEach(function (el) {\n    el.classList.add('is-in');\n    var ticking = false, x = 0, y = 0;\n    function paint() {\n      ticking = false;\n      el.style.setProperty('--mx', x.toFixed(1) + '%');\n      el.style.setProperty('--my', y.toFixed(1) + '%');\n    }\n    el.addEventListener('mousemove', function (e) {\n      var r = el.getBoundingClientRect();\n      x = ((e.clientX - r.left) / r.width) * 100;\n      y = ((e.clientY - r.top) / r.height) * 100;\n      if (!ticking) { ticking = true; requestAnimationFrame(paint); }\n    });\n  });\n})();",
+      "reducedMotionSafe": true,
+      "noJsFallback": true
+    },
+    {
+      "id": "page-intro",
+      "name": "Page intro",
+      "css": "html.js-motion [data-recipe=\"page-intro\"] {\n  opacity: 0;\n  transform: translateY(8px);\n}\nhtml.js-motion [data-recipe=\"page-intro\"].is-in {\n  opacity: 1;\n  transform: none;\n  transition: opacity .8s ease, transform .8s ease;\n}\n@media (prefers-reduced-motion: reduce) {\n  html.js-motion [data-recipe=\"page-intro\"] {\n    opacity: 1 !important;\n    transform: none !important;\n    transition: none !important;\n  }\n}",
+      "js": "(function () {\n  if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;\n  document.documentElement.classList.add('js-motion');\n  var els = document.querySelectorAll('[data-recipe=\"page-intro\"]');\n  if (!els.length) return;\n  var io = 'IntersectionObserver' in window\n    ? new IntersectionObserver(function (entries) {\n        entries.forEach(function (e) {\n          if (e.isIntersecting) { e.target.classList.add('is-in'); io.unobserve(e.target); }\n        });\n      }, { threshold: 0 })\n    : null;\n  els.forEach(function (el) { io ? io.observe(el) : el.classList.add('is-in'); });\n})();",
+      "reducedMotionSafe": true,
+      "noJsFallback": true
+    }
+  ]
+}

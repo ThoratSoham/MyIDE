@@ -1,0 +1,6 @@
+{
+  "id": "web-core",
+  "name": "Web Core",
+  "version": "1.0.0",
+  "slots": ["palette", "fontPair", "scale", "section"]
+}

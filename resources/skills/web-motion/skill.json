@@ -1,0 +1,6 @@
+{
+  "id": "web-motion",
+  "name": "Web Motion",
+  "version": "1.0.0",
+  "slots": ["motion"]
+}

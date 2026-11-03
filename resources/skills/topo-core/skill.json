@@ -1,0 +1,6 @@
+{
+  "id": "topo-core",
+  "name": "Topo Core",
+  "version": "1.0.0",
+  "slots": ["topo"]
+}

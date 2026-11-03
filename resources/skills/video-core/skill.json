@@ -1,0 +1,6 @@
+{
+  "id": "video-core",
+  "name": "Video Core",
+  "version": "1.0.0",
+  "slots": ["video"]
+}
