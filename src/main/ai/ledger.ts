@@ -5,22 +5,19 @@ import log from "electron-log";
 import type { Lane, LaneHealth } from "./types";
 
 // FR-2.3: the quota ledger. Tracks requests used today per lane and tokens in
-// the last minute (Groq TPM). Saved to disk so a restart does not reset usage
-// and re-send requests a lane has no budget for.
-//
-// FR-2.5: when a daily quota is used up we remove the lane until its reset time
-// and never poll it before then. FR-2.7: a 403/404 marks a model dead for 24h.
+// the last minute (Groq TPM), persisted to disk across restarts.
+// Session-dead models (404 / 400 unavailable) are kept in memory for the
+// current session only so they are never conflated with timed quota resets.
 
 const MINUTE_MS = 60_000;
 const DAY_MS = 86_400_000;
-const DEAD_MS = 24 * 60 * 60 * 1000;
 
 interface LedgerEntry {
   laneId: string;
   dayKey: number;
   requestsToday: number;
-  minuteStamps: number[]; // request timestamps inside the rolling minute
-  tokenStamps: { t: number; tokens: number }[]; // token usage inside the rolling minute
+  minuteStamps: number[];
+  tokenStamps: { t: number; tokens: number }[];
   deadUntil: number | null;
   removedUntil: number | null;
 }
@@ -30,11 +27,24 @@ interface LedgerFile {
   entries: LedgerEntry[];
 }
 
+export interface SessionDeadInfo {
+  laneId: string;
+  provider: string;
+  model: string;
+  reason: string;
+  suggestedModel?: string;
+  at: number;
+}
+
+export interface CooldownInfo {
+  until: number;
+  reason: string;
+}
+
 function ledgerFilePath(): string {
   return path.join(app.getPath("userData"), "ledger.json");
 }
 
-// The "day" a request belongs to, honoring a provider's reset hour (UTC).
 export function dayKey(resetHourUtc: number, now = Date.now()): number {
   return Math.floor((now - resetHourUtc * 3600_000) / DAY_MS);
 }
@@ -46,6 +56,8 @@ export function nextResetMs(resetHourUtc: number, now = Date.now()): number {
 
 export class Ledger {
   private entries = new Map<string, LedgerEntry>();
+  private sessionDead = new Map<string, SessionDeadInfo>();
+  private cooldowns = new Map<string, CooldownInfo>();
   private dirty = false;
 
   load(lanes: Lane[]): void {
@@ -54,7 +66,11 @@ export class Ledger {
     if (fs.existsSync(f)) {
       try {
         const parsed = JSON.parse(fs.readFileSync(f, "utf8")) as LedgerFile;
-        for (const e of parsed.entries ?? []) this.entries.set(e.laneId, e);
+        for (const e of parsed.entries ?? []) {
+          // Clear legacy 24h deadUntil values that previously masked 404s as quota resets.
+          e.deadUntil = null;
+          this.entries.set(e.laneId, e);
+        }
       } catch (err) {
         log.warn("ledger: could not read ledger.json, starting fresh", err);
       }
@@ -81,8 +97,6 @@ export class Ledger {
     return e;
   }
 
-  // Roll windows forward: clear the rolling minute and reset the daily counter
-  // when the day boundary passes.
   private roll(lane: Lane): LedgerEntry {
     const e = this.ensure(lane);
     const now = Date.now();
@@ -101,9 +115,9 @@ export class Ledger {
       e.removedUntil = null;
       this.dirty = true;
     }
-    if (e.deadUntil && now >= e.deadUntil) {
-      e.deadUntil = null;
-      this.dirty = true;
+    const cd = this.cooldowns.get(lane.id);
+    if (cd && now >= cd.until) {
+      this.cooldowns.delete(lane.id);
     }
     return e;
   }
@@ -117,11 +131,17 @@ export class Ledger {
     }
   }
 
-  // LaneHealth view the router and isLaneUsable consume.
   healthFor(lane: Lane): LaneHealth {
     const e = this.roll(lane);
+    const dead = this.sessionDead.get(lane.id);
+    const cd = this.cooldowns.get(lane.id);
     return {
-      deadUntil: e.deadUntil,
+      deadSession: !!dead,
+      deadReason: dead?.reason,
+      suggestedModel: dead?.suggestedModel,
+      cooldownUntil: cd ? cd.until : null,
+      cooldownReason: cd?.reason,
+      deadUntil: null,
       removedUntil: e.removedUntil,
       minuteRequestCount: e.minuteStamps.length,
       minuteTokenCount: e.tokenStamps.reduce((n, s) => n + s.tokens, 0),
@@ -132,7 +152,6 @@ export class Ledger {
     return this.roll(lane).requestsToday;
   }
 
-  // FR-2.5: daily budget used. Remove the lane until reset.
   markDayExhausted(lane: Lane, untilMs?: number): void {
     const e = this.roll(lane);
     e.removedUntil = untilMs ?? nextResetMs(lane.limits.resetHourUtc);
@@ -140,15 +159,45 @@ export class Ledger {
     log.warn(`ledger: ${lane.id} removed until ${new Date(e.removedUntil).toISOString()} (day quota)`);
   }
 
-  // FR-2.7: 403/404 -> dead for 24h.
-  markDead(lane: Lane): void {
-    const e = this.roll(lane);
-    e.deadUntil = Date.now() + DEAD_MS;
-    this.dirty = true;
-    log.warn(`ledger: ${lane.id} marked dead for 24h`);
+  setCooldown(lane: Lane, untilMs: number, reason: string): void {
+    this.cooldowns.set(lane.id, { until: untilMs, reason });
+    log.warn(`ledger: ${lane.id} cooldown until ${new Date(untilMs).toLocaleTimeString()} — ${reason}`);
   }
 
-  // FR-2.6: only recorded when a request is actually sent.
+  clearTransientCooldowns(): void {
+    this.cooldowns.clear();
+    for (const e of this.entries.values()) {
+      if (e.removedUntil) {
+        e.removedUntil = null;
+        this.dirty = true;
+      }
+    }
+  }
+
+  markSessionDead(lane: Lane, reason: string, suggestedModel?: string): void {
+    this.sessionDead.set(lane.id, {
+      laneId: lane.id,
+      provider: lane.provider,
+      model: lane.model,
+      reason,
+      suggestedModel,
+      at: Date.now(),
+    });
+    log.warn(
+      `ledger: ${lane.id} permanently marked dead for session — ${reason}${
+        suggestedModel ? ` (suggested replacement: ${suggestedModel})` : ""
+      }`,
+    );
+  }
+
+  sessionDeadList(): SessionDeadInfo[] {
+    return [...this.sessionDead.values()];
+  }
+
+  clearSessionDeadForModel(provider: string, model: string): void {
+    this.sessionDead.delete(`${provider}:${model}`);
+  }
+
   recordSend(lane: Lane, tokens: number): void {
     const e = this.roll(lane);
     e.requestsToday += 1;
@@ -157,12 +206,11 @@ export class Ledger {
     this.dirty = true;
   }
 
-  // FR-2.4: learn a real limit from a header/error and pin it for the lane.
   snapshot(): { laneId: string; requestsToday: number; deadUntil: number | null; removedUntil: number | null }[] {
     return [...this.entries.values()].map((e) => ({
       laneId: e.laneId,
       requestsToday: e.requestsToday,
-      deadUntil: e.deadUntil,
+      deadUntil: this.sessionDead.has(e.laneId) ? Number.MAX_SAFE_INTEGER : null,
       removedUntil: e.removedUntil,
     }));
   }

@@ -1,29 +1,34 @@
 import type {
   Lane,
+  LaneExhaustedDetail,
   LaneHealth,
   ProviderId,
   ProviderOutcome,
   ProviderError,
   ProviderRequest,
+  RouterLaneEvent,
   TaskClass,
 } from "./types";
-import { GROQ_MAX_REQUEST_TOKENS } from "./types";
 import { isLaneUsable } from "./providers";
 import { estimateTokens, shrinkPromptToTokens } from "./tokenize";
+import { StreamCancelledError } from "./http";
 import log from "electron-log";
 
-// FR-3.1: chain order depends on task class. Gemini carries big contexts, Groq
-// is first for tiny autocomplete work, OpenRouter is the second opinion.
 export const DEFAULT_CHAIN_ORDER: Record<TaskClass, ProviderId[]> = {
-  reasoning: ["gemini", "openrouter", "groq"],
-  general: ["gemini", "openrouter", "groq"],
+  reasoning: ["gemini", "groq", "openrouter"],
+  general: ["gemini", "groq", "openrouter"],
   autocomplete: ["groq", "gemini", "openrouter"],
 };
 
-// FR-3.6: at most 3 retries per request per lane. No endless loops.
-const MAX_RETRIES_PER_LANE = 3;
+// PART 1 #2:
+// - 404 / 400 "model unavailable": mark permanently dead for session, 0 retries, next lane, surface suggestedModel.
+// - 429 / quota: honor Retry-After, exponential backoff + jitter (max 3 retries per lane), set per-lane cooldown, then next lane.
+// - 401 / 403: stop immediately and show "check your API key" (do NOT rotate lanes).
+// - 5xx / network / timeout: retry ONCE with backoff, then fall to the next lane.
 
-// Same failing (lane, error kind) logged once with a counter, not spammed.
+export const MAX_429_RETRIES_PER_LANE = 3;
+export const MAX_SERVER_RETRIES_PER_LANE = 1;
+
 type LogEntry = { count: number; last: number };
 const logIndex = new Map<string, LogEntry>();
 
@@ -44,37 +49,40 @@ function promptText(messages: ProviderRequest["messages"]): string {
   return messages.map((m) => m.content).join("\n");
 }
 
-// Section 11 / FR-3.2: convert a provider error into a routing action.
 export type ErrorAction =
-  | { kind: "retrySame"; backoffMs: number }
-  | { kind: "nextLane"; reason: string; permanent?: boolean }
+  | { kind: "retryRateLimit"; retryAfterMs?: number }
+  | { kind: "retryOnceServer"; backoffMs: number }
+  | { kind: "modelDeadSession"; reason: string; suggestedModel?: string }
+  | { kind: "dayQuotaExhausted"; reason: string; waitUntilMs?: number }
+  | { kind: "authStop"; reason: string }
   | { kind: "skipLane"; reason: string }
-  | { kind: "stopProvider"; reason: string }
   | { kind: "shrinkAndRetry"; reason: string }
+  | { kind: "cancelled" }
   | { kind: "fallback"; reason: string };
 
 export function classifyError(err: ProviderError): ErrorAction {
   switch (err.kind) {
-    case "rateLimitMinute":
-      return { kind: "retrySame", backoffMs: Math.max(err.retryAfterMs ?? 10_000, 1000) };
-    case "rateLimitDay":
-      return { kind: "nextLane", reason: "day quota exhausted", permanent: true };
-    case "tooBig":
-      return { kind: "shrinkAndRetry", reason: "413 too big" };
-    case "badRequest":
-      return { kind: "skipLane", reason: "400 bad request" };
+    case "cancelled":
+      return { kind: "cancelled" };
     case "unauthorized":
-      return { kind: "stopProvider", reason: "unauthorized or missing key" };
+      return { kind: "authStop", reason: err.message || "Check your API key" };
     case "modelDead":
-      return { kind: "nextLane", reason: "model dead for 24h", permanent: true };
+      return { kind: "modelDeadSession", reason: err.message, suggestedModel: err.suggestedModel };
+    case "rateLimitMinute":
+      return { kind: "retryRateLimit", retryAfterMs: err.retryAfterMs };
+    case "rateLimitDay":
+      return { kind: "dayQuotaExhausted", reason: err.message || "Daily quota exhausted", waitUntilMs: err.waitUntilMs };
+    case "tooBig":
+      return { kind: "shrinkAndRetry", reason: "413 request too large" };
+    case "badRequest":
+      return { kind: "skipLane", reason: err.message || "400 bad request" };
     case "serverError":
     case "networkError":
     case "timeout":
-      return { kind: "retrySame", backoffMs: 1500 + Math.floor(Math.random() * 1500) };
     case "empty":
-      return { kind: "retrySame", backoffMs: 800 + Math.floor(Math.random() * 800) };
+      return { kind: "retryOnceServer", backoffMs: err.retryAfterMs ?? 1000 };
     default:
-      return { kind: "fallback", reason: "unmapped error" };
+      return { kind: "fallback", reason: err.message || "Unmapped provider error" };
   }
 }
 
@@ -84,54 +92,189 @@ export interface SendResult {
   laneUsed?: Lane;
   error?: ProviderError;
   promptTokens?: number;
+  authStop?: boolean;
+  cancelled?: boolean;
+  allExhausted?: boolean;
+  laneDetails?: LaneExhaustedDetail[];
+  resumeAtMs?: number | null;
 }
 
 export interface RouterConfig {
-  getLane: (providerId: ProviderId, role: TaskClass) => Lane | undefined;
+  /** Preferred multi-model lane list (already ordered by priority). */
+  getLanes?: (role: TaskClass) => Lane[];
+  /** Legacy per-provider lane getter (kept for backward compatibility). */
+  getLane?: (providerId: ProviderId, role: TaskClass) => Lane | undefined;
+  isProviderConfigured?: (providerId: ProviderId) => boolean;
   healthFor: (laneId: string) => LaneHealth | undefined;
   sendVia: (lane: Lane, req: ProviderRequest) => Promise<ProviderOutcome>;
-  countRetries: (laneId: string) => number;
-  bumpRetries: (laneId: string) => void;
-  resetRetries: (laneId: string) => void;
-  // Called after every real send attempt so the ledger can apply the error
-  // rules (day-exhausted removal, dead model, learned limits).
+  countRetries?: (laneId: string) => number;
+  bumpRetries?: (laneId: string) => void;
+  resetRetries?: (laneId: string) => void;
+  markSessionDead?: (lane: Lane, reason: string, suggestedModel?: string) => void;
+  setLaneCooldown?: (lane: Lane, untilMs: number, reason: string) => void;
   onOutcome?: (lane: Lane, outcome: ProviderOutcome, estimatedTokens: number) => void;
+  onLaneEvent?: (event: RouterLaneEvent) => void;
   chainOrder?: Record<TaskClass, ProviderId[]>;
+  /** Tunable timing hooks (used by unit tests so backoff math runs in milliseconds). */
+  baseBackoffMs?: number;
+  serverBackoffMs?: number;
+  maxInlineWaitMs?: number;
+  maxRetriesPerLane?: number;
+  random?: () => number;
+  sleepFn?: (ms: number, signal?: AbortSignal) => Promise<void>;
+}
+
+export function computeExponentialBackoffMs(
+  retryIndex: number,
+  baseBackoffMs: number,
+  retryAfterMs?: number,
+  randomFn: () => number = Math.random,
+): number {
+  const exp = baseBackoffMs * Math.pow(2, retryIndex);
+  const floor = Math.max(retryAfterMs ?? 0, exp);
+  const jitter = Math.floor(randomFn() * Math.max(1, floor * 0.25));
+  return floor + jitter;
 }
 
 export class Router {
   constructor(public config: RouterConfig) {}
 
+  private resolveCandidateLanes(taskClass: TaskClass): Lane[] {
+    if (this.config.getLanes) {
+      return this.config.getLanes(taskClass);
+    }
+    const chain = this.config.chainOrder?.[taskClass] ?? DEFAULT_CHAIN_ORDER[taskClass];
+    const out: Lane[] = [];
+    for (const providerId of chain) {
+      const lane = this.config.getLane?.(providerId, taskClass);
+      if (lane) out.push(lane);
+    }
+    return out;
+  }
+
   async send(
     taskClass: TaskClass,
     messages: ProviderRequest["messages"],
-    options?: { schema?: object; maxTokens?: number; expectedOutputTokens?: number }
+    options?: {
+      schema?: object;
+      maxTokens?: number;
+      expectedOutputTokens?: number;
+      signal?: AbortSignal;
+      onDelta?: (chunk: string) => void;
+      cacheStaticPrefix?: boolean;
+    },
   ): Promise<SendResult> {
-    const chain = this.config.chainOrder?.[taskClass] ?? DEFAULT_CHAIN_ORDER[taskClass];
-    const expectedOutputTokens = options?.expectedOutputTokens ?? 512;
+    if (options?.signal?.aborted) {
+      return {
+        ok: false,
+        cancelled: true,
+        error: { kind: "cancelled", message: "Cancelled by user" },
+      };
+    }
 
-    let shrinkTried = false;
+    const candidates = this.resolveCandidateLanes(taskClass);
+    const expectedOutputTokens = options?.expectedOutputTokens ?? 512;
+    const baseBackoffMs = this.config.baseBackoffMs ?? 1_000;
+    const serverBackoffMs = this.config.serverBackoffMs ?? 800;
+    const maxInlineWaitMs = this.config.maxInlineWaitMs ?? 30_000;
+    const maxRetries429 = this.config.maxRetriesPerLane ?? MAX_429_RETRIES_PER_LANE;
+    const randomFn = this.config.random ?? Math.random;
+    const sleepFn = this.config.sleepFn ?? abortableSleep;
 
     const fullPrompt = promptText(messages);
     const baseEstimate = estimateTokens(fullPrompt, expectedOutputTokens);
 
-    for (const providerId of chain) {
-      const lane = this.config.getLane(providerId, taskClass);
-      if (!lane) continue;
+    const laneDetails: LaneExhaustedDetail[] = [];
+    let prevFailedLane: Lane | undefined;
+    let prevFailureReason = "";
+
+    for (const lane of candidates) {
+      if (options?.signal?.aborted) {
+        return {
+          ok: false,
+          cancelled: true,
+          error: { kind: "cancelled", message: "Cancelled by user" },
+        };
+      }
+
+      if (lane.provider !== "offline" && this.config.isProviderConfigured && !this.config.isProviderConfigured(lane.provider)) {
+        laneDetails.push({
+          laneId: lane.id,
+          provider: lane.provider,
+          model: lane.model,
+          status: "no_key",
+          reason: `No API key configured for ${lane.provider}`,
+          resumeAtMs: null,
+        });
+        continue;
+      }
 
       const health = this.config.healthFor(lane.id);
       if (!health) continue;
 
-      // FR-2.6: never send a request we know is over the lane's size cap.
-      // Groq has a hard 5,500-token limit; over that we skip it (no failed try).
-      if (lane.limits.maxTokensPerRequest != null && baseEstimate > lane.limits.maxTokensPerRequest) {
-        logEvent(`toobig:${lane.id}`, `lane ${lane.id} skipped: prompt ~${baseEstimate} tokens over cap ${lane.limits.maxTokensPerRequest}`);
+      if (health.deadSession) {
+        laneDetails.push({
+          laneId: lane.id,
+          provider: lane.provider,
+          model: lane.model,
+          status: "dead",
+          reason: health.deadReason ?? "Model permanently unavailable for this session",
+          resumeAtMs: null,
+          suggestedModel: health.suggestedModel,
+        });
         continue;
       }
 
-      if (!isLaneUsable(lane, health, baseEstimate)) {
-        logEvent(`unusable:${lane.id}`, `lane ${lane.id} not usable (quota/health)`);
+      if (lane.limits.maxTokensPerRequest != null && baseEstimate > lane.limits.maxTokensPerRequest) {
+        const reason = `Skipped: prompt (~${baseEstimate} tokens) exceeds ${lane.limits.maxTokensPerRequest}-token cap`;
+        logEvent(`toobig:${lane.id}`, `lane ${lane.id} ${reason}`);
+        laneDetails.push({
+          laneId: lane.id,
+          provider: lane.provider,
+          model: lane.model,
+          status: "skipped_size",
+          reason,
+          resumeAtMs: null,
+        });
         continue;
+      }
+
+      const now = Date.now();
+      if (!isLaneUsable(lane, health, baseEstimate, now)) {
+        const resumeAtMs =
+          (health.removedUntil && health.removedUntil > now ? health.removedUntil : null) ??
+          (health.cooldownUntil && health.cooldownUntil > now ? health.cooldownUntil : null) ??
+          (health.minuteRequestCount >= lane.limits.rpm ||
+          (lane.limits.tpm != null && health.minuteTokenCount >= lane.limits.tpm)
+            ? now + 60_000
+            : null);
+        const isQuota = Boolean(health.removedUntil && health.removedUntil > now);
+        const reason = isQuota
+          ? `Daily quota exhausted until ${formatLocalTime(health.removedUntil!)}`
+          : health.cooldownUntil && health.cooldownUntil > now
+          ? `Rate-limit cooldown until ${formatLocalTime(health.cooldownUntil)}${
+              health.cooldownReason ? ` (${health.cooldownReason.slice(0, 120)})` : ""
+            }`
+          : `Per-minute rate limit (${lane.limits.rpm} RPM) active`;
+        logEvent(`unusable:${lane.id}`, `lane ${lane.id} unusable: ${reason}`);
+        laneDetails.push({
+          laneId: lane.id,
+          provider: lane.provider,
+          model: lane.model,
+          status: isQuota ? "quota" : "cooldown",
+          reason,
+          resumeAtMs,
+        });
+        continue;
+      }
+
+      if (prevFailedLane) {
+        this.config.onLaneEvent?.({
+          type: "switch-lane",
+          fromLane: prevFailedLane,
+          toLane: lane,
+          reason: prevFailureReason,
+        });
       }
 
       let req: ProviderRequest = {
@@ -139,63 +282,291 @@ export class Router {
         messages,
         schema: options?.schema,
         maxTokens: options?.maxTokens,
+        signal: options?.signal,
+        onDelta: options?.onDelta,
+        cacheStaticPrefix: options?.cacheStaticPrefix,
       };
 
-      for (let attempt = 0; attempt < MAX_RETRIES_PER_LANE; attempt++) {
+      let rateLimitRetries = 0;
+      let serverRetries = 0;
+      let shrinkTried = false;
+
+      for (;;) {
+        if (options?.signal?.aborted) {
+          return {
+            ok: false,
+            cancelled: true,
+            error: { kind: "cancelled", message: "Cancelled by user" },
+          };
+        }
+
         const estimate = estimateTokens(promptText(req.messages), expectedOutputTokens);
-        const outcome = await this.config.sendVia(lane, req);
-        this.config.onOutcome?.(lane, outcome, estimate);
+        let outcome: ProviderOutcome;
+        try {
+          outcome = await this.config.sendVia(lane, req);
+        } catch (e) {
+          if (e instanceof StreamCancelledError || options?.signal?.aborted) {
+            return {
+              ok: false,
+              cancelled: true,
+              error: { kind: "cancelled", message: "Cancelled by user" },
+            };
+          }
+          outcome = {
+            ok: false,
+            error: { kind: "networkError", message: e instanceof Error ? e.message : String(e) },
+          };
+        }
 
         if (outcome.ok) {
+          this.config.onOutcome?.(lane, outcome, estimate);
           log.info(`[router] success via ${lane.id} (~${estimate} tokens est.)`);
-          this.config.resetRetries(lane.id);
+          this.config.resetRetries?.(lane.id);
           return { ok: true, content: outcome.content, laneUsed: lane, promptTokens: estimate };
         }
 
-        const err = outcome.error!;
+        const err = outcome.error;
+        if (err.kind === "cancelled" || options?.signal?.aborted) {
+          return {
+            ok: false,
+            cancelled: true,
+            error: { kind: "cancelled", message: "Cancelled by user" },
+          };
+        }
+
+        this.config.onOutcome?.(lane, outcome, estimate);
         const action = classifyError(err);
         logEvent(`err:${lane.id}:${err.kind}`, `lane ${lane.id} error ${err.kind}: ${err.message}`);
 
-        if (action.kind === "stopProvider" || action.kind === "skipLane" || action.kind === "nextLane") {
-          if (action.kind === "stopProvider") {
-            // Skip every remaining lane of this provider in this chain.
-            log.warn(`[router] provider ${providerId} skipped: ${action.reason}`);
-          }
-          break; // move to next lane
+        // 1) 401 / 403 -> STOP immediately and show "check your API key". Do NOT rotate lanes.
+        if (action.kind === "authStop") {
+          const msg = /check your api key/i.test(action.reason)
+            ? action.reason
+            : `${action.reason} — check your API key.`;
+          log.error(`[router] auth error on ${lane.id}; stopping without rotating lanes: ${msg}`);
+          return {
+            ok: false,
+            authStop: true,
+            laneUsed: lane,
+            error: { ...err, kind: "unauthorized", message: msg },
+          };
         }
 
+        // 2) 404 / 400 "model unavailable" -> permanently dead for session, 0 retries, move to next lane.
+        if (action.kind === "modelDeadSession") {
+          this.config.markSessionDead?.(lane, action.reason, action.suggestedModel);
+          this.config.onLaneEvent?.({
+            type: "model-dead",
+            lane,
+            reason: action.reason,
+            suggestedModel: action.suggestedModel,
+          });
+          laneDetails.push({
+            laneId: lane.id,
+            provider: lane.provider,
+            model: lane.model,
+            status: "dead",
+            reason: action.reason,
+            resumeAtMs: null,
+            suggestedModel: action.suggestedModel,
+          });
+          prevFailedLane = lane;
+          prevFailureReason = `Model ${lane.model} unavailable`;
+          break;
+        }
+
+        // 3) Daily quota exhausted -> record reset time and move to next lane.
+        if (action.kind === "dayQuotaExhausted") {
+          const until = action.waitUntilMs ?? Date.now() + 3_600_000;
+          this.config.setLaneCooldown?.(lane, until, action.reason);
+          laneDetails.push({
+            laneId: lane.id,
+            provider: lane.provider,
+            model: lane.model,
+            status: "quota",
+            reason: action.reason,
+            resumeAtMs: until,
+          });
+          prevFailedLane = lane;
+          prevFailureReason = `Quota reached on ${lane.model}`;
+          break;
+        }
+
+        // 4) 429 rate limit -> honor Retry-After, per-lane cooldown with exponential backoff + jitter (max 3 retries).
+        if (action.kind === "retryRateLimit") {
+          const delayMs = computeExponentialBackoffMs(
+            rateLimitRetries,
+            baseBackoffMs,
+            action.retryAfterMs,
+            randomFn,
+          );
+          const untilMs = Date.now() + delayMs;
+          this.config.setLaneCooldown?.(lane, untilMs, err.message);
+
+          if (rateLimitRetries < maxRetries429 && delayMs <= maxInlineWaitMs) {
+            rateLimitRetries += 1;
+            this.config.bumpRetries?.(lane.id);
+            this.config.onLaneEvent?.({
+              type: "backoff",
+              lane,
+              delayMs,
+              attempt: rateLimitRetries,
+              maxRetries: maxRetries429,
+              reason: err.message,
+            });
+            try {
+              await sleepFn(delayMs, options?.signal);
+            } catch {
+              return {
+                ok: false,
+                cancelled: true,
+                error: { kind: "cancelled", message: "Cancelled by user" },
+              };
+            }
+            continue;
+          }
+
+          log.warn(`[router] lane ${lane.id} exhausted 429 retries (${rateLimitRetries}/${maxRetries429}); trying next lane`);
+          laneDetails.push({
+            laneId: lane.id,
+            provider: lane.provider,
+            model: lane.model,
+            status: "cooldown",
+            reason: `${err.message} (cooldown until ${formatLocalTime(untilMs)})`,
+            resumeAtMs: untilMs,
+          });
+          prevFailedLane = lane;
+          prevFailureReason = `429 rate limit on ${lane.model}`;
+          break;
+        }
+
+        // 5) 5xx / network / timeout -> retry ONCE with backoff, then fall to next lane.
+        if (action.kind === "retryOnceServer") {
+          if (serverRetries < MAX_SERVER_RETRIES_PER_LANE) {
+            serverRetries += 1;
+            this.config.bumpRetries?.(lane.id);
+            const jitter = Math.floor(randomFn() * Math.max(1, serverBackoffMs * 0.3));
+            const delayMs = Math.max(serverBackoffMs, Math.min(action.backoffMs, 5_000)) + jitter;
+            this.config.onLaneEvent?.({
+              type: "backoff",
+              lane,
+              delayMs,
+              attempt: serverRetries,
+              maxRetries: MAX_SERVER_RETRIES_PER_LANE,
+              reason: err.message,
+            });
+            try {
+              await sleepFn(delayMs, options?.signal);
+            } catch {
+              return {
+                ok: false,
+                cancelled: true,
+                error: { kind: "cancelled", message: "Cancelled by user" },
+              };
+            }
+            continue;
+          }
+
+          laneDetails.push({
+            laneId: lane.id,
+            provider: lane.provider,
+            model: lane.model,
+            status: "error",
+            reason: `${err.message} (retried once)`,
+            resumeAtMs: null,
+          });
+          prevFailedLane = lane;
+          prevFailureReason = `Server/network error on ${lane.model}`;
+          break;
+        }
+
+        // 6) 413 shrink once and retry on this lane, else next lane.
         if (action.kind === "shrinkAndRetry") {
           if (!shrinkTried) {
             shrinkTried = true;
             const smaller = shrinkPromptToTokens(fullPrompt, Math.floor(estimate * 0.6));
-            log.info(`[router] 413 on ${lane.id}; retrying once with a smaller prompt (~${smaller.actualTokens} tokens)`);
+            log.info(`[router] 413 on ${lane.id}; retrying once with smaller prompt (~${smaller.actualTokens} tokens)`);
             req = { ...req, messages: [{ role: "user", content: smaller.text }] };
             continue;
           }
-          break; // already shrunk once -> skip this lane for this request
+          laneDetails.push({
+            laneId: lane.id,
+            provider: lane.provider,
+            model: lane.model,
+            status: "skipped_size",
+            reason: err.message,
+            resumeAtMs: null,
+          });
+          prevFailedLane = lane;
+          prevFailureReason = `Request too large for ${lane.model}`;
+          break;
         }
 
-        if (action.kind === "retrySame") {
-          this.config.bumpRetries(lane.id);
-          if (this.config.countRetries(lane.id) >= MAX_RETRIES_PER_LANE) {
-            log.warn(`[router] lane ${lane.id} exhausted retries`);
-            break;
-          }
-          await sleep(action.backoffMs);
-          continue;
-        }
-
-        break; // fallback / unmapped -> next lane
+        // 7) 400 badRequest / fallback -> move to next lane immediately.
+        const fallbackReason = "reason" in action ? action.reason : err.message;
+        laneDetails.push({
+          laneId: lane.id,
+          provider: lane.provider,
+          model: lane.model,
+          status: "error",
+          reason: fallbackReason,
+          resumeAtMs: null,
+        });
+        prevFailedLane = lane;
+        prevFailureReason = fallbackReason;
+        break;
       }
     }
 
+    const now = Date.now();
+    let earliestResumeMs: number | null = null;
+    for (const d of laneDetails) {
+      if (d.resumeAtMs != null && d.resumeAtMs > now) {
+        if (earliestResumeMs == null || d.resumeAtMs < earliestResumeMs) {
+          earliestResumeMs = d.resumeAtMs;
+        }
+      }
+    }
+
+    const summaryLines = laneDetails.map((d) => `- ${d.laneId}: ${d.reason}`);
+    const resumeLine = earliestResumeMs
+      ? `Estimated local resume time: ${formatLocalTime(earliestResumeMs)}.`
+      : "No timed cooldown reset pending — edit models or add an API key.";
+
     return {
       ok: false,
-      error: { kind: "unmapped", message: `all lanes unavailable for task class ${taskClass}` },
+      allExhausted: true,
+      laneDetails,
+      resumeAtMs: earliestResumeMs,
+      error: {
+        kind: "unmapped",
+        message: [
+          `All ${laneDetails.length || "configured"} lane(s) are unavailable:`,
+          ...summaryLines,
+          resumeLine,
+        ].join("\n"),
+      },
     };
   }
 }
 
-function sleep(ms: number) {
-  return new Promise<void>((resolve) => setTimeout(resolve, ms));
+export function formatLocalTime(ms: number): string {
+  return new Date(ms).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+}
+
+export function abortableSleep(ms: number, signal?: AbortSignal): Promise<void> {
+  if (signal?.aborted) {
+    return Promise.reject(new StreamCancelledError());
+  }
+  return new Promise<void>((resolve, reject) => {
+    const onAbort = () => {
+      clearTimeout(t);
+      reject(new StreamCancelledError());
+    };
+    if (signal) signal.addEventListener("abort", onAbort, { once: true });
+    const t = setTimeout(() => {
+      if (signal) signal.removeEventListener("abort", onAbort);
+      resolve();
+    }, ms);
+  });
 }

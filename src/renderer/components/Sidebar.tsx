@@ -1,17 +1,28 @@
 import React, { useCallback, useEffect, useState } from "react";
+import {
+  ChevronDown,
+  ChevronRight,
+  FileCode2,
+  FilePlus,
+  FileText,
+  Folder,
+  FolderOpen,
+  FolderPlus,
+  RefreshCw,
+  Trash2,
+} from "lucide-react";
 import type { FsEntry } from "../../shared/electron-api-types";
 
-// FR-1.1 / FR-1.2: the explorer lists the real workspace, expands folders
-// lazily, opens files in the editor, and can create a file or folder in the
-// selected directory. Deletes go to .myide/trash in the main process
-// (FR-13.3), never to nothing.
+// Explorer file tree: lazy directory expansion, file/folder creation, and safe
+// move-to-trash deletion (.myide/trash), styled with Nova IDE design tokens & Lucide icons.
 
 interface Props {
   workspaceKey: number;
   onOpenFile: (path: string) => void;
+  embedded?: boolean;
 }
 
-export function Sidebar({ workspaceKey, onOpenFile }: Props) {
+export function Sidebar({ workspaceKey, onOpenFile, embedded = false }: Props) {
   const [children, setChildren] = useState<Record<string, FsEntry[]>>({});
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [selectedDir, setSelectedDir] = useState("");
@@ -92,47 +103,61 @@ export function Sidebar({ workspaceKey, onOpenFile }: Props) {
   const canCreateHere = selectedDir === "" || expanded.has(selectedDir) || !!children[selectedDir];
 
   return (
-    <aside className="flex h-full w-60 flex-none flex-col border-r border-[var(--color-border)] bg-[var(--color-surface)]">
-      <div className="flex items-center justify-between border-b border-[var(--color-border)] px-3 py-2">
-        <span className="text-xs font-medium uppercase tracking-wide text-[var(--color-muted)]">Explorer</span>
-        <div className="flex gap-1">
+    <div
+      className={
+        embedded
+          ? "flex h-full w-full flex-col overflow-hidden bg-[var(--nova-bg-panel)]"
+          : "flex h-full w-60 flex-none flex-col border-r border-[var(--nova-border)] bg-[var(--nova-bg-panel)]"
+      }
+    >
+      <div className="flex items-center justify-between border-b border-[var(--nova-border)] px-3 py-2">
+        <span className="text-[11px] font-semibold uppercase tracking-wider text-[var(--nova-text-muted)]">
+          Explorer
+        </span>
+        <div className="flex items-center gap-0.5">
           <button
+            type="button"
             onClick={() => {
               setCreating("file");
               setName("");
             }}
             disabled={!canCreateHere}
-            className="rounded px-1.5 py-0.5 text-xs text-[var(--color-muted)] hover:bg-[var(--color-surface-alt)] disabled:opacity-30"
-            title="New file in the selected folder"
+            aria-label="New file"
+            title="New file in selected folder"
+            className="rounded p-1 text-[var(--nova-text-muted)] hover:bg-[var(--nova-bg-hover)] hover:text-[var(--nova-text-primary)] disabled:opacity-30"
           >
-            +file
+            <FilePlus size={13} />
           </button>
           <button
+            type="button"
             onClick={() => {
               setCreating("dir");
               setName("");
             }}
             disabled={!canCreateHere}
-            className="rounded px-1.5 py-0.5 text-xs text-[var(--color-muted)] hover:bg-[var(--color-surface-alt)] disabled:opacity-30"
-            title="New folder in the selected folder"
+            aria-label="New folder"
+            title="New folder in selected folder"
+            className="rounded p-1 text-[var(--nova-text-muted)] hover:bg-[var(--nova-bg-hover)] hover:text-[var(--nova-text-primary)] disabled:opacity-30"
           >
-            +dir
+            <FolderPlus size={13} />
           </button>
           <button
+            type="button"
             onClick={() => void reload()}
-            className="rounded px-1.5 py-0.5 text-xs text-[var(--color-muted)] hover:bg-[var(--color-surface-alt)]"
+            aria-label="Refresh explorer"
             title="Refresh"
+            className="rounded p-1 text-[var(--nova-text-muted)] hover:bg-[var(--nova-bg-hover)] hover:text-[var(--nova-text-primary)]"
           >
-            ↻
+            <RefreshCw size={13} />
           </button>
         </div>
       </div>
 
-      <div className="flex-1 overflow-auto p-2 text-sm">
+      <div className="flex-1 overflow-auto p-1.5 text-xs">
         {rootEntries.length === 0 && !error && (
-          <div className="p-2 text-xs text-[var(--color-muted)]">This folder is empty.</div>
+          <div className="p-2.5 text-xs text-[var(--nova-text-muted)]">This folder is empty.</div>
         )}
-        <ul className="m-0 list-none p-0">
+        <ul role="tree" aria-label="Workspace files" className="m-0 list-none space-y-0.5 p-0">
           {sorted(rootEntries).map((entry) => (
             <Node
               key={entry.path}
@@ -149,8 +174,8 @@ export function Sidebar({ workspaceKey, onOpenFile }: Props) {
       </div>
 
       {creating && (
-        <div className="border-t border-[var(--color-border)] p-2">
-          <div className="mb-1 text-[10px] text-[var(--color-muted)]">
+        <div className="border-t border-[var(--nova-border)] bg-[var(--nova-bg-surface)] p-2.5">
+          <div className="mb-1 text-[10.5px] text-[var(--nova-text-muted)]">
             New {creating === "file" ? "file" : "folder"} in {selectedDir || "workspace root"}
           </div>
           <input
@@ -161,20 +186,22 @@ export function Sidebar({ workspaceKey, onOpenFile }: Props) {
               if (e.key === "Enter") void create();
               if (e.key === "Escape") setCreating(null);
             }}
-            placeholder={creating === "file" ? "name.html" : "folder-name"}
-            className="w-full rounded border border-[var(--color-border)] bg-[var(--color-base)] px-2 py-1 text-xs text-[var(--color-text)] outline-none"
+            placeholder={creating === "file" ? "index.ts" : "components"}
+            className="w-full rounded-md border border-[var(--nova-border)] bg-[var(--nova-bg-app)] px-2 py-1 text-xs text-[var(--nova-text-primary)] outline-none focus:border-[var(--nova-accent-bright)]"
           />
-          <div className="mt-1 flex gap-1">
+          <div className="mt-1.5 flex gap-1.5">
             <button
+              type="button"
               onClick={() => void create()}
               disabled={!name.trim()}
-              className="rounded bg-[var(--color-accent)] px-2 py-0.5 text-xs text-white disabled:opacity-40"
+              className="rounded-md bg-[var(--nova-accent)] px-2.5 py-0.5 text-xs font-medium text-white disabled:opacity-40"
             >
               Create
             </button>
             <button
+              type="button"
               onClick={() => setCreating(null)}
-              className="rounded border border-[var(--color-border)] px-2 py-0.5 text-xs"
+              className="rounded-md border border-[var(--nova-border)] px-2 py-0.5 text-xs text-[var(--nova-text-secondary)]"
             >
               Cancel
             </button>
@@ -183,12 +210,20 @@ export function Sidebar({ workspaceKey, onOpenFile }: Props) {
       )}
 
       {error && (
-        <div className="border-t border-[var(--color-negative)] bg-[var(--color-negative)]/10 px-2 py-1 text-[10px] text-[var(--color-negative)]">
+        <div className="border-t border-[var(--nova-danger)]/40 bg-[var(--nova-danger-soft)] px-2.5 py-1.5 text-[11px] text-[var(--nova-danger)]">
           {error}
         </div>
       )}
-    </aside>
+    </div>
   );
+}
+
+function fileIconFor(name: string) {
+  const lower = name.toLowerCase();
+  if (lower.endsWith(".md") || lower.endsWith(".txt")) {
+    return <FileText size={13} className="shrink-0 text-[var(--nova-text-muted)]" />;
+  }
+  return <FileCode2 size={13} className="shrink-0 text-[var(--nova-accent-bright)] opacity-85" />;
 }
 
 function Node({
@@ -212,42 +247,61 @@ function Node({
   const subs = children[entry.path];
 
   return (
-    <li className="m-0">
-      <div className="group flex items-center">
+    <li role="treeitem" aria-expanded={entry.isDir ? isOpen : undefined} className="m-0">
+      <div className="group flex items-center rounded-md hover:bg-[var(--nova-bg-hover)]">
         <button
+          type="button"
           onClick={() => (entry.isDir ? onToggle(entry.path) : onOpen(entry.path))}
-          className="flex min-w-0 flex-1 items-center gap-1.5 rounded px-1 py-0.5 text-left text-sm text-[var(--color-text)] outline-none hover:bg-[var(--color-surface-alt)]"
+          className="flex min-w-0 flex-1 items-center gap-1.5 rounded-md py-1 pr-1 text-left text-[12.5px] text-[var(--nova-text-primary)] outline-none"
           style={{ paddingLeft: `${depth * 12 + 6}px` }}
           title={entry.path}
         >
-          <span className="w-3 shrink-0 text-center text-[10px] leading-none opacity-70">
-            {entry.isDir ? (isOpen ? "▾" : "▸") : "•"}
-          </span>
+          {entry.isDir ? (
+            <>
+              {isOpen ? (
+                <ChevronDown size={12} className="shrink-0 text-[var(--nova-text-muted)]" />
+              ) : (
+                <ChevronRight size={12} className="shrink-0 text-[var(--nova-text-muted)]" />
+              )}
+              {isOpen ? (
+                <FolderOpen size={13} className="shrink-0 text-[var(--nova-warning)] opacity-90" />
+              ) : (
+                <Folder size={13} className="shrink-0 text-[var(--nova-warning)] opacity-80" />
+              )}
+            </>
+          ) : (
+            <>
+              <span className="w-3 shrink-0" />
+              {fileIconFor(entry.name)}
+            </>
+          )}
           <span className="truncate">{entry.name}</span>
         </button>
         <button
+          type="button"
           onClick={() => onDelete(entry.path)}
-          className="mr-1 rounded px-1 text-xs text-[var(--color-muted)] opacity-0 hover:text-[var(--color-negative)] group-hover:opacity-100"
+          aria-label={`Move ${entry.name} to trash`}
+          className="mr-1 rounded p-1 text-[var(--nova-text-muted)] opacity-0 hover:text-[var(--nova-danger)] group-hover:opacity-100 focus:opacity-100"
           title="Move to trash"
         >
-          ×
+          <Trash2 size={12} />
         </button>
       </div>
 
       {entry.isDir && isOpen && (
-        <ul className="m-0 list-none p-0">
+        <ul role="group" className="m-0 list-none space-y-0.5 p-0">
           {subs === undefined && (
             <li
-              className="py-0.5 text-xs text-[var(--color-muted)]"
-              style={{ paddingLeft: `${(depth + 1) * 12 + 6}px` }}
+              className="py-0.5 text-[11px] text-[var(--nova-text-muted)]"
+              style={{ paddingLeft: `${(depth + 1) * 12 + 22}px` }}
             >
               loading…
             </li>
           )}
           {subs !== undefined && subs.length === 0 && (
             <li
-              className="py-0.5 text-xs text-[var(--color-muted)]"
-              style={{ paddingLeft: `${(depth + 1) * 12 + 6}px` }}
+              className="py-0.5 text-[11px] text-[var(--nova-text-muted)]"
+              style={{ paddingLeft: `${(depth + 1) * 12 + 22}px` }}
             >
               empty
             </li>

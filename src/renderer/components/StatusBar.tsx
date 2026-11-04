@@ -1,16 +1,36 @@
 import React, { useEffect, useState } from "react";
+import {
+  AlertTriangle,
+  Bell,
+  Clock,
+  Cpu,
+  Gauge,
+  GitBranch,
+  TerminalSquare,
+  Zap,
+} from "lucide-react";
 import type { JobMode, JobSnapshot } from "../../shared/electron-api-types";
-
-// FR-12.1 / FR-12.6: the status bar shows the mode, the run state, the model
-// that served the last message and a live countdown while the run waits on
-// quota. It reads the same snapshot as the chat, so it can never disagree.
+import { StatusDot } from "../design-system/primitives";
+import { useLayoutStore } from "../stores/layoutStore";
 
 interface Props {
   snapshot: JobSnapshot | null;
   defaultMode: JobMode;
+  inboxCount?: number;
+  onOpenModels?: () => void;
+  onOpenInbox?: () => void;
 }
 
-export function StatusBar({ snapshot, defaultMode }: Props) {
+export function StatusBar({
+  snapshot,
+  defaultMode,
+  inboxCount = 0,
+  onOpenModels,
+  onOpenInbox,
+}: Props) {
+  const { appMode, toggleAppMode, openBottomTab, bottomPanelOpen, bottomTab, setBottomPanelOpen } =
+    useLayoutStore();
+
   const waiting = snapshot?.waiting ?? null;
   const [countdown, setCountdown] = useState(0);
 
@@ -31,55 +51,128 @@ export function StatusBar({ snapshot, defaultMode }: Props) {
   const lastModel = [...(snapshot?.messages ?? [])].reverse().find((m) => m.model)?.model;
   const score = snapshot?.result?.score;
 
-  const state = paused
-    ? { label: "Paused", dot: "bg-[var(--color-warn)]" }
+  const statusState: "running" | "waiting" | "done" | "idle" = paused || waiting
+    ? "waiting"
+    : running
+    ? "running"
+    : "done";
+
+  const statusLabel = paused
+    ? "Paused"
     : waiting
-      ? { label: "Waiting for quota", dot: "bg-[var(--color-warn)]" }
-      : running
-        ? { label: "Running", dot: "bg-[var(--color-accent)] animate-pulse" }
-        : { label: "Ready", dot: "bg-[var(--color-positive)]" };
+    ? "Quota Cooldown"
+    : running
+    ? "Agent Running"
+    : "Ready";
+
+  const handleBottomToggle = (tab: "terminal" | "problems" | "quota") => {
+    if (appMode === "editor" && bottomPanelOpen && bottomTab === tab) {
+      setBottomPanelOpen(false);
+    } else {
+      openBottomTab(tab);
+    }
+  };
 
   return (
-    <footer className="flex h-7 flex-none items-center gap-3 border-t border-[var(--color-border)] bg-[var(--color-surface)] px-3 text-xs text-[var(--color-muted)]">
-      <span className="text-[var(--color-muted)]">Mode</span>
-      <span className="capitalize text-[var(--color-text)]">{mode}</span>
+    <footer
+      role="contentinfo"
+      data-nova-statusbar
+      className="flex h-6 flex-none select-none items-center gap-2 border-t border-[var(--nova-border)] bg-[var(--nova-bg-rail)] px-2.5 text-[11px] text-[var(--nova-text-muted)]"
+    >
+      {/* Left: View mode + branch + quick bottom panel toggles */}
+      <button
+        type="button"
+        onClick={toggleAppMode}
+        title="Switch between Editor and Agent Manager (Ctrl+Shift+M)"
+        className="flex items-center gap-1 rounded px-1.5 py-0.5 font-medium text-[var(--nova-accent-bright)] hover:bg-[var(--nova-bg-hover)]"
+      >
+        <Zap size={11} />
+        <span>{appMode === "manager" ? "Mission Control" : "Editor"}</span>
+      </button>
 
-      {snapshot?.kind && (
-        <>
-          <span className="opacity-40">·</span>
-          <span className="capitalize text-[var(--color-text)]">{snapshot.kind} job</span>
-        </>
-      )}
+      <span className="h-3 w-px bg-[var(--nova-border)]" aria-hidden="true" />
 
-      {lastModel && (
-        <>
-          <span className="opacity-40">·</span>
-          <span className="font-mono text-[var(--color-muted)]">{lastModel}</span>
-        </>
-      )}
+      <span className="hidden items-center gap-1 text-[var(--nova-text-secondary)] sm:inline-flex">
+        <GitBranch size={11} />
+        <span className="capitalize">{mode}</span>
+      </span>
+
+      <button
+        type="button"
+        onClick={() => handleBottomToggle("problems")}
+        title="Toggle Problems panel"
+        className="flex items-center gap-1 rounded px-1.5 py-0.5 hover:bg-[var(--nova-bg-hover)] hover:text-[var(--nova-text-primary)]"
+      >
+        <AlertTriangle size={11} />
+        <span className="hidden md:inline">Problems</span>
+      </button>
+
+      <button
+        type="button"
+        onClick={() => handleBottomToggle("terminal")}
+        title="Toggle Integrated Terminal (Ctrl+`)"
+        className="flex items-center gap-1 rounded px-1.5 py-0.5 hover:bg-[var(--nova-bg-hover)] hover:text-[var(--nova-text-primary)]"
+      >
+        <TerminalSquare size={11} />
+        <span className="hidden md:inline">Terminal</span>
+      </button>
+
+      <button
+        type="button"
+        onClick={() => handleBottomToggle("quota")}
+        title="Inspect Free-Tier Provider Quotas"
+        className="flex items-center gap-1 rounded px-1.5 py-0.5 hover:bg-[var(--nova-bg-hover)] hover:text-[var(--nova-text-primary)]"
+      >
+        <Gauge size={11} />
+        <span className="hidden lg:inline">Quotas</span>
+      </button>
 
       {score != null && (
-        <span className="rounded bg-[var(--color-accent)]/15 px-1.5 py-0.5 text-[10px] text-[var(--color-accent-strong)]">
+        <span className="rounded bg-[var(--nova-accent-soft)] px-1.5 py-0.5 text-[10px] font-medium text-[var(--nova-accent-bright)]">
           score {score}/10
         </span>
       )}
 
-      {waiting && (
-        <div className="ml-auto flex items-center gap-2 rounded border border-[var(--color-warn)] bg-[var(--color-warn)]/10 px-2 py-0.5 text-[var(--color-warn)]">
-          <span className="animate-pulse">waiting</span>
-          {waiting.lane && <span className="font-mono">{waiting.lane}</span>}
-          {waiting.resumeAtMs && (
-            <span className="font-mono">
-              {hhmm(waiting.resumeAtMs)} · {mmss(countdown)}
-            </span>
-          )}
-        </div>
-      )}
+      {/* Right: Cooldown countdown, Model pill, Inbox, Run state */}
+      <div className="ml-auto flex items-center gap-2">
+        {waiting && (
+          <div className="flex items-center gap-1.5 rounded border border-[var(--nova-warning)]/40 bg-[var(--nova-warning-soft)] px-2 py-0.5 text-[10.5px] text-[var(--nova-warning)]">
+            <Clock size={11} className="animate-pulse" />
+            {waiting.lane && <span className="font-mono">{waiting.lane}</span>}
+            {waiting.resumeAtMs && (
+              <span className="font-mono">
+                {hhmm(waiting.resumeAtMs)} · {mmss(countdown)}
+              </span>
+            )}
+          </div>
+        )}
 
-      <span className={`${waiting ? "" : "ml-auto"} flex items-center gap-1.5`}>
-        <span className={`inline-block h-2 w-2 rounded-full ${state.dot}`} />
-        <span className="text-[var(--color-text)]">{state.label}</span>
-      </span>
+        <button
+          type="button"
+          onClick={onOpenModels}
+          title="Active free-tier lane (click to configure models)"
+          className="flex items-center gap-1 rounded px-1.5 py-0.5 font-mono text-[10.5px] text-[var(--nova-text-secondary)] hover:bg-[var(--nova-bg-hover)] hover:text-[var(--nova-text-primary)]"
+        >
+          <Cpu size={11} className="text-[var(--nova-accent-bright)]" />
+          <span className="max-w-[200px] truncate">{lastModel || "auto-free-router"}</span>
+        </button>
+
+        {inboxCount > 0 && (
+          <button
+            type="button"
+            onClick={onOpenInbox}
+            className="flex items-center gap-1 rounded bg-[var(--nova-warning-soft)] px-1.5 py-0.5 text-[10.5px] font-medium text-[var(--nova-warning)]"
+          >
+            <Bell size={11} />
+            <span>{inboxCount}</span>
+          </button>
+        )}
+
+        <span className="flex items-center gap-1.5 pl-1 text-[var(--nova-text-primary)]">
+          <StatusDot state={statusState} />
+          <span>{statusLabel}</span>
+        </span>
+      </div>
     </footer>
   );
 }

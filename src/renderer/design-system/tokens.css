@@ -1,0 +1,236 @@
+/* Nova IDE Design Token System (Step 2)
+ * Dark-first aesthetic: dense but readable, crisp hairline borders, subtle
+ * layered surfaces, consistent 4px spacing scale, single indigo-cyan accent,
+ * smooth micro-animations, and full prefers-reduced-motion accessibility.
+ */
+
+:root {
+  /* Typography */
+  --nova-font-sans: "Inter", "Segoe UI VariableText", "Segoe UI", ui-sans-serif, system-ui, -apple-system, sans-serif;
+  --nova-font-mono: "JetBrains Mono", "Cascadia Code", "Fira Code", Consolas, Menlo, ui-monospace, monospace;
+
+  --nova-text-2xs: 10px;
+  --nova-text-xs: 11px;
+  --nova-text-sm: 12.5px;
+  --nova-text-md: 13.5px;
+  --nova-text-lg: 15px;
+  --nova-text-xl: 18px;
+
+  /* Spacing scale (4px grid) */
+  --nova-space-1: 4px;
+  --nova-space-2: 8px;
+  --nova-space-3: 12px;
+  --nova-space-4: 16px;
+  --nova-space-5: 20px;
+  --nova-space-6: 24px;
+  --nova-space-8: 32px;
+
+  /* Radii */
+  --nova-radius-xs: 4px;
+  --nova-radius-sm: 6px;
+  --nova-radius-md: 8px;
+  --nova-radius-lg: 12px;
+  --nova-radius-xl: 16px;
+  --nova-radius-pill: 9999px;
+
+  /* Motion */
+  --nova-ease: cubic-bezier(0.16, 1, 0.3, 1);
+  --nova-duration-fast: 110ms;
+  --nova-duration-normal: 180ms;
+}
+
+/* Dark Theme (Default) */
+:root,
+:root[data-theme="dark"],
+[data-theme="dark"] {
+  color-scheme: dark;
+  --nova-bg-app: #0b0d12;
+  --nova-bg-rail: #0d1017;
+  --nova-bg-panel: #11151e;
+  --nova-bg-surface: #161b26;
+  --nova-bg-elevated: #1c2230;
+  --nova-bg-hover: #212838;
+  --nova-bg-active: #273046;
+  --nova-bg-editor: #0e1118;
+  --nova-bg-overlay: rgba(6, 8, 13, 0.68);
+
+  --nova-border-subtle: #1c2230;
+  --nova-border: #252d3f;
+  --nova-border-strong: #354059;
+
+  --nova-text-primary: #e8ecf4;
+  --nova-text-secondary: #b2bccd;
+  --nova-text-muted: #7c879c;
+  --nova-text-faint: #556075;
+  --nova-text-inverse: #ffffff;
+
+  --nova-accent: #6366f1;
+  --nova-accent-bright: #818cf8;
+  --nova-accent-hover: #4f46e5;
+  --nova-accent-soft: rgba(99, 102, 241, 0.14);
+  --nova-accent-border: rgba(129, 140, 248, 0.36);
+
+  --nova-success: #34d399;
+  --nova-success-soft: rgba(52, 211, 153, 0.14);
+  --nova-warning: #fbbf24;
+  --nova-warning-soft: rgba(251, 191, 36, 0.14);
+  --nova-danger: #f87171;
+  --nova-danger-soft: rgba(248, 113, 113, 0.14);
+  --nova-info: #38bdf8;
+
+  --nova-shadow-sm: 0 2px 6px rgba(0, 0, 0, 0.32);
+  --nova-shadow-md: 0 8px 24px rgba(0, 0, 0, 0.45);
+  --nova-shadow-lg: 0 20px 48px rgba(0, 0, 0, 0.62);
+
+  /* Syntax highlight tokens */
+  --syn-keyword: #c084fc;
+  --syn-string: #6ee7b7;
+  --syn-comment: #64748b;
+  --syn-number: #fdba74;
+  --syn-type: #67e8f9;
+  --syn-fn: #93c5fd;
+  --syn-tag: #fda4af;
+
+  /* Backward-compatible --color-* aliases so all existing components stay cohesive */
+  --color-base: var(--nova-bg-app);
+  --color-surface: var(--nova-bg-panel);
+  --color-surface-alt: var(--nova-bg-elevated);
+  --color-border: var(--nova-border);
+  --color-text: var(--nova-text-primary);
+  --color-muted: var(--nova-text-muted);
+  --color-accent: var(--nova-accent);
+  --color-accent-strong: var(--nova-accent-bright);
+  --color-positive: var(--nova-success);
+  --color-warn: var(--nova-warning);
+  --color-negative: var(--nova-danger);
+  --color-editor-bg: var(--nova-bg-editor);
+  --editor-bg: var(--nova-bg-editor);
+}
+
+/* Light Theme */
+:root[data-theme="light"],
+[data-theme="light"] {
+  color-scheme: light;
+  --nova-bg-app: #f4f6fa;
+  --nova-bg-rail: #eef1f6;
+  --nova-bg-panel: #ffffff;
+  --nova-bg-surface: #f8fafc;
+  --nova-bg-elevated: #eef2f7;
+  --nova-bg-hover: #e6ebf2;
+  --nova-bg-active: #dce3ef;
+  --nova-bg-editor: #ffffff;
+  --nova-bg-overlay: rgba(15, 23, 42, 0.38);
+
+  --nova-border-subtle: #ebeef4;
+  --nova-border: #d8dee9;
+  --nova-border-strong: #bcc5d6;
+
+  --nova-text-primary: #0f172a;
+  --nova-text-secondary: #334155;
+  --nova-text-muted: #64748b;
+  --nova-text-faint: #94a3b8;
+  --nova-text-inverse: #ffffff;
+
+  --nova-accent: #4f46e5;
+  --nova-accent-bright: #4338ca;
+  --nova-accent-hover: #4338ca;
+  --nova-accent-soft: rgba(79, 70, 229, 0.11);
+  --nova-accent-border: rgba(79, 70, 229, 0.32);
+
+  --nova-success: #059669;
+  --nova-success-soft: rgba(5, 150, 105, 0.12);
+  --nova-warning: #d97706;
+  --nova-warning-soft: rgba(217, 119, 6, 0.12);
+  --nova-danger: #dc2626;
+  --nova-danger-soft: rgba(220, 38, 38, 0.11);
+  --nova-info: #0284c7;
+
+  --nova-shadow-sm: 0 1px 4px rgba(15, 23, 42, 0.06);
+  --nova-shadow-md: 0 8px 24px rgba(15, 23, 42, 0.11);
+  --nova-shadow-lg: 0 20px 44px rgba(15, 23, 42, 0.18);
+
+  --syn-keyword: #7c3aed;
+  --syn-string: #047857;
+  --syn-comment: #64748b;
+  --syn-number: #b45309;
+  --syn-type: #0369a1;
+  --syn-fn: #1d4ed8;
+  --syn-tag: #be123c;
+
+  --color-base: var(--nova-bg-app);
+  --color-surface: var(--nova-bg-panel);
+  --color-surface-alt: var(--nova-bg-elevated);
+  --color-border: var(--nova-border);
+  --color-text: var(--nova-text-primary);
+  --color-muted: var(--nova-text-muted);
+  --color-accent: var(--nova-accent);
+  --color-accent-strong: var(--nova-accent-bright);
+  --color-positive: var(--nova-success);
+  --color-warn: var(--nova-warning);
+  --color-negative: var(--nova-danger);
+  --color-editor-bg: var(--nova-bg-editor);
+  --editor-bg: var(--nova-bg-editor);
+}
+
+/* Micro-animations */
+@keyframes nova-pulse-ring {
+  0% {
+    box-shadow: 0 0 0 0 rgba(99, 102, 241, 0.45);
+  }
+  70% {
+    box-shadow: 0 0 0 5px rgba(99, 102, 241, 0);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgba(99, 102, 241, 0);
+  }
+}
+
+@keyframes nova-modal-pop {
+  from {
+    opacity: 0;
+    transform: translateY(-4px) scale(0.985);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes nova-caret-blink {
+  0%,
+  49% {
+    opacity: 1;
+  }
+  50%,
+  100% {
+    opacity: 0;
+  }
+}
+
+.nova-status-pulse {
+  animation: nova-pulse-ring 2s infinite;
+}
+
+.nova-overlay-enter {
+  animation: nova-modal-pop var(--nova-duration-normal) var(--nova-ease);
+}
+
+.nova-stream-caret::after {
+  content: "▍";
+  display: inline-block;
+  margin-left: 2px;
+  color: var(--nova-accent-bright);
+  animation: nova-caret-blink 0.9s infinite;
+}
+
+/* Reduced motion accessibility (Step 2) */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}

@@ -9,12 +9,14 @@ import type {
 import { TIMEOUT_CHUNK_MS, TIMEOUT_FIRST_BYTE_MS } from "./types";
 import { getProviderKey, type ProviderKeyId } from "../store";
 import {
+  extractSuggestedModel,
   headerMap,
   openStream,
   parseRetryAfterMs,
   parseRetryTextMs,
   readText,
   sseData,
+  StreamCancelledError,
   StreamTimeoutError,
   type Timeouts,
 } from "./http";
@@ -27,7 +29,10 @@ const TIMEOUTS: Timeouts = {
 
 const DAY_MS = 86_400_000;
 
-// Section 11: turn an HTTP status + body into the routing classification.
+const MODEL_UNAVAILABLE_RE =
+  /\bmodel\b[\s\S]{0,120}\b(unavailable|not\s+found|does\s+not\s+exist|decommission\w*|deprecated|no\s+endpoints|not\s+supported|unknown\s+model|invalid\s+model)\b|no\s+endpoints\s+found\s+for|this\s+model\s+is\s+unavailable|model_not_found|model_decommissioned/i;
+
+// PART 1 #2: classify HTTP errors accurately by status code and body.
 export function classifyHttpError(
   status: number,
   body: string,
@@ -35,6 +40,31 @@ export function classifyHttpError(
 ): ProviderError {
   const snippet = body.slice(0, 400);
 
+  // 401 / 403 -> Stop and show "check your API key". Do NOT rotate through lanes.
+  if (status === 401 || status === 403) {
+    return {
+      kind: "unauthorized",
+      status,
+      message: `Authentication failed (HTTP ${status}) — check your API key. ${snippet}`.trim(),
+      headers,
+      body: snippet,
+    };
+  }
+
+  // 404 or 400 "model unavailable" -> permanently dead for session, extract suggested slug if any.
+  if (status === 404 || (status === 400 && MODEL_UNAVAILABLE_RE.test(body))) {
+    const suggestedModel = extractSuggestedModel(body);
+    return {
+      kind: "modelDead",
+      status,
+      message: `Model unavailable (HTTP ${status}): ${snippet}`,
+      suggestedModel,
+      headers,
+      body: snippet,
+    };
+  }
+
+  // 429 / quota -> honor Retry-After header, distinguish daily reset vs retryable cooldown.
   if (status === 429) {
     const waitMs = parseRetryAfterMs(headers) ?? parseRetryTextMs(body);
     const looksDaily = /per\s*day|perday|daily|\brpd\b|requests?\s*per\s*day|quota.*day/i.test(body);
@@ -42,29 +72,34 @@ export function classifyHttpError(
     if (looksDaily || veryLong) {
       return {
         kind: "rateLimitDay",
-        message: `daily quota exhausted (429): ${snippet}`,
+        status,
+        message: `Daily quota exhausted (429): ${snippet}`,
         waitUntilMs: Date.now() + (waitMs ?? DAY_MS),
+        retryAfterMs: waitMs ?? DAY_MS,
         headers,
         body: snippet,
       };
     }
     return {
       kind: "rateLimitMinute",
-      message: `rate limited (429): ${snippet}`,
-      retryAfterMs: waitMs ?? 10_000,
+      status,
+      message: `Rate limited (429): ${snippet}`,
+      retryAfterMs: waitMs ?? undefined,
       headers,
       body: snippet,
     };
   }
 
-  if (status === 413) return { kind: "tooBig", message: `request too large (413): ${snippet}`, headers, body: snippet };
-  if (status === 400) return { kind: "badRequest", message: `bad request (400): ${snippet}`, headers, body: snippet };
-  if (status === 401) return { kind: "unauthorized", message: `unauthorized (401): ${snippet}`, headers, body: snippet };
-  if (status === 403 || status === 404) {
-    return { kind: "modelDead", message: `model unavailable (${status}): ${snippet}`, headers, body: snippet };
+  if (status === 413) {
+    return { kind: "tooBig", status, message: `Request too large (413): ${snippet}`, headers, body: snippet };
   }
-  if (status >= 500) return { kind: "serverError", message: `server error (${status}): ${snippet}`, headers, body: snippet };
-  return { kind: "unmapped", message: `unexpected status ${status}: ${snippet}`, headers, body: snippet };
+  if (status === 400) {
+    return { kind: "badRequest", status, message: `Bad request (400): ${snippet}`, headers, body: snippet };
+  }
+  if (status >= 500) {
+    return { kind: "serverError", status, message: `Server error (${status}): ${snippet}`, headers, body: snippet };
+  }
+  return { kind: "unmapped", status, message: `Unexpected status ${status}: ${snippet}`, headers, body: snippet };
 }
 
 // FR-2.4: learn real limits from response headers when a provider tells us.
@@ -79,7 +114,6 @@ export function discoverLimitsFromHeaders(headers: Record<string, string>): Part
     return Number.isFinite(n) ? n : null;
   };
 
-  // Groq: x-ratelimit-limit-requests / x-ratelimit-limit-tokens (per minute).
   const groqRpm = num("x-ratelimit-limit-requests");
   const groqTpm = num("x-ratelimit-limit-tokens");
   if (groqRpm != null && groqRpm > 0) {
@@ -91,7 +125,6 @@ export function discoverLimitsFromHeaders(headers: Record<string, string>): Part
     found = true;
   }
 
-  // OpenRouter: x-ratelimit-limit / x-ratelimit-remaining (per minute).
   const orLimit = num("x-ratelimit-limit");
   if (orLimit != null && orLimit > 0) {
     out.rpm = orLimit;
@@ -102,11 +135,14 @@ export function discoverLimitsFromHeaders(headers: Record<string, string>): Part
 }
 
 function toError(e: unknown): ProviderError {
+  if (e instanceof StreamCancelledError || (e as Error)?.name === "StreamCancelledError") {
+    return { kind: "cancelled", message: "Cancelled by user" };
+  }
   if (e instanceof StreamTimeoutError) {
-    return { kind: "timeout", message: e.message, retryAfterMs: 5_000 };
+    return { kind: "timeout", message: e.message, retryAfterMs: 2_000 };
   }
   const msg = e instanceof Error ? e.message : String(e);
-  return { kind: "networkError", message: `network error: ${msg}` };
+  return { kind: "networkError", message: `Network error: ${msg}` };
 }
 
 function ok(content: string, promptTokens = 0, completionTokens = 0): ProviderOutcome {
@@ -114,11 +150,46 @@ function ok(content: string, promptTokens = 0, completionTokens = 0): ProviderOu
   return { ok: true, content, usage: { promptTokens, completionTokens } };
 }
 
+/**
+ * Format messages for OpenAI-compatible APIs, attaching prompt-caching markers
+ * (`cache_control: { type: "ephemeral" }`) on the static system prompt when the
+ * provider/model supports explicit prompt caching (e.g., Anthropic/Claude on OpenRouter),
+ * while keeping the static prefix at index 0 for automatic prefix caching on Groq/OpenAI.
+ */
+function formatOpenAiMessages(
+  messages: ProviderRequest["messages"],
+  provider: "openrouter" | "groq",
+  model: string,
+  cacheStaticPrefix: boolean,
+): Array<{ role: string; content: unknown }> {
+  const supportsExplicitCacheControl =
+    provider === "openrouter" &&
+    cacheStaticPrefix &&
+    /^(anthropic|google)\//i.test(model);
+
+  return messages.map((m, idx) => {
+    if (supportsExplicitCacheControl && idx === 0 && m.role === "system" && m.content.length >= 256) {
+      return {
+        role: m.role,
+        content: [
+          {
+            type: "text",
+            text: m.content,
+            cache_control: { type: "ephemeral" },
+          },
+        ],
+      };
+    }
+    return { role: m.role, content: m.content };
+  });
+}
+
 // ---------------------------------------------------------------------------
 // OpenAI-compatible streaming (OpenRouter + Groq share this shape).
 // ---------------------------------------------------------------------------
 
 async function streamOpenAiCompatible(
+  provider: "openrouter" | "groq",
   url: string,
   apiKey: string,
   model: string,
@@ -138,7 +209,7 @@ async function streamOpenAiCompatible(
         },
         body: JSON.stringify({
           model,
-          messages: req.messages.map((m) => ({ role: m.role, content: m.content })),
+          messages: formatOpenAiMessages(req.messages, provider, model, req.cacheStaticPrefix !== false),
           stream: true,
           temperature: req.temperature ?? 0.7,
           max_tokens: req.maxTokens ?? 2048,
@@ -146,6 +217,7 @@ async function streamOpenAiCompatible(
         }),
       },
       TIMEOUTS,
+      req.signal,
     );
     res = opened.res;
   } catch (e) {
@@ -155,7 +227,7 @@ async function streamOpenAiCompatible(
   const headers = headerMap(res);
 
   if (!res.ok) {
-    const body = await readText(res, TIMEOUT_CHUNK_MS).catch(() => "");
+    const body = await readText(res, TIMEOUT_CHUNK_MS, req.signal).catch(() => "");
     return { ok: false, error: classifyHttpError(res.status, body, headers) };
   }
 
@@ -164,7 +236,7 @@ async function streamOpenAiCompatible(
   let completionTokens = 0;
 
   try {
-    for await (const payload of sseData(res, TIMEOUT_CHUNK_MS)) {
+    for await (const payload of sseData(res, TIMEOUT_CHUNK_MS, req.signal)) {
       if (payload === "[DONE]") break;
       let json: any;
       try {
@@ -173,7 +245,10 @@ async function streamOpenAiCompatible(
         continue;
       }
       const delta = json?.choices?.[0]?.delta?.content;
-      if (typeof delta === "string") content += delta;
+      if (typeof delta === "string" && delta.length > 0) {
+        content += delta;
+        req.onDelta?.(delta);
+      }
       if (json?.usage) {
         promptTokens = json.usage.prompt_tokens ?? promptTokens;
         completionTokens = json.usage.completion_tokens ?? completionTokens;
@@ -181,6 +256,7 @@ async function streamOpenAiCompatible(
     }
   } catch (e) {
     const err = toError(e);
+    if (err.kind === "cancelled") return { ok: false, error: err };
     if (content.trim()) return { ok: true, content, usage: { promptTokens, completionTokens } };
     return { ok: false, error: err };
   }
@@ -226,6 +302,7 @@ async function streamGemini(apiKey: string, model: string, req: ProviderRequest)
         }),
       },
       TIMEOUTS,
+      req.signal,
     );
     res = opened.res;
   } catch (e) {
@@ -234,7 +311,7 @@ async function streamGemini(apiKey: string, model: string, req: ProviderRequest)
 
   const headers = headerMap(res);
   if (!res.ok) {
-    const body = await readText(res, TIMEOUT_CHUNK_MS).catch(() => "");
+    const body = await readText(res, TIMEOUT_CHUNK_MS, req.signal).catch(() => "");
     return { ok: false, error: classifyHttpError(res.status, body, headers) };
   }
 
@@ -243,7 +320,7 @@ async function streamGemini(apiKey: string, model: string, req: ProviderRequest)
   let completionTokens = 0;
 
   try {
-    for await (const payload of sseData(res, TIMEOUT_CHUNK_MS)) {
+    for await (const payload of sseData(res, TIMEOUT_CHUNK_MS, req.signal)) {
       let json: any;
       try {
         json = JSON.parse(payload);
@@ -252,7 +329,12 @@ async function streamGemini(apiKey: string, model: string, req: ProviderRequest)
       }
       const parts = json?.candidates?.[0]?.content?.parts;
       if (Array.isArray(parts)) {
-        for (const p of parts) if (typeof p?.text === "string") content += p.text;
+        for (const p of parts) {
+          if (typeof p?.text === "string" && p.text.length > 0) {
+            content += p.text;
+            req.onDelta?.(p.text);
+          }
+        }
       }
       const um = json?.usageMetadata;
       if (um) {
@@ -262,6 +344,7 @@ async function streamGemini(apiKey: string, model: string, req: ProviderRequest)
     }
   } catch (e) {
     const err = toError(e);
+    if (err.kind === "cancelled") return { ok: false, error: err };
     if (content.trim()) return { ok: true, content, usage: { promptTokens, completionTokens } };
     return { ok: false, error: err };
   }
@@ -282,19 +365,35 @@ function makeAdapter(providerId: ProviderKeyId): ProviderAdapter {
     async send(req: ProviderRequest): Promise<ProviderOutcome> {
       const key = getProviderKey(providerId);
       if (!key) {
-        return { ok: false, error: { kind: "unauthorized", message: `no key configured for ${providerId}` } };
+        return {
+          ok: false,
+          error: { kind: "unauthorized", message: `No API key configured for ${providerId} — check your API key.` },
+        };
       }
 
       switch (providerId) {
         case "gemini":
           return streamGemini(key, req.lane.model, req);
         case "openrouter":
-          return streamOpenAiCompatible("https://openrouter.ai/api/v1/chat/completions", key, req.lane.model, req, {
-            "HTTP-Referer": "https://myide.local",
-            "X-Title": "MyIDE",
-          });
+          return streamOpenAiCompatible(
+            "openrouter",
+            "https://openrouter.ai/api/v1/chat/completions",
+            key,
+            req.lane.model,
+            req,
+            {
+              "HTTP-Referer": "https://myide.local",
+              "X-Title": "MyIDE",
+            },
+          );
         case "groq":
-          return streamOpenAiCompatible("https://api.groq.com/openai/v1/chat/completions", key, req.lane.model, req);
+          return streamOpenAiCompatible(
+            "groq",
+            "https://api.groq.com/openai/v1/chat/completions",
+            key,
+            req.lane.model,
+            req,
+          );
         default: {
           log.warn(`real-providers: unknown provider ${providerId}`);
           return { ok: false, error: { kind: "unmapped", message: `unknown provider ${providerId}` } };
@@ -302,6 +401,52 @@ function makeAdapter(providerId: ProviderKeyId): ProviderAdapter {
       }
     },
   };
+}
+
+/**
+ * Fetch the live model IDs from a provider's /models endpoint (with a short 10s timeout).
+ */
+export async function fetchProviderModelIds(
+  provider: ProviderKeyId,
+  apiKey: string | null,
+): Promise<string[] | null> {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), 10_000);
+  try {
+    if (provider === "gemini") {
+      if (!apiKey) return null;
+      const res = await fetch(
+        `https://generativelanguage.googleapis.com/v1beta/models?key=${encodeURIComponent(apiKey)}`,
+        { signal: ctrl.signal },
+      );
+      if (!res.ok) return null;
+      const json: any = await res.json();
+      return (json.models ?? []).map((m: any) => String(m.name).replace(/^models\//, ""));
+    }
+    if (provider === "openrouter") {
+      const headers: Record<string, string> = {};
+      if (apiKey) headers.Authorization = `Bearer ${apiKey}`;
+      const res = await fetch("https://openrouter.ai/api/v1/models", { headers, signal: ctrl.signal });
+      if (!res.ok) return null;
+      const json: any = await res.json();
+      return (json.data ?? []).map((m: any) => String(m.id));
+    }
+    if (provider === "groq") {
+      if (!apiKey) return null;
+      const res = await fetch("https://api.groq.com/openai/v1/models", {
+        headers: { Authorization: `Bearer ${apiKey}` },
+        signal: ctrl.signal,
+      });
+      if (!res.ok) return null;
+      const json: any = await res.json();
+      return (json.data ?? []).map((m: any) => String(m.id));
+    }
+    return null;
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 // FR-2.8: "Test my keys" pings each configured provider's model list.
@@ -314,7 +459,7 @@ export async function testProviderKey(
       const res = await fetch(
         `https://generativelanguage.googleapis.com/v1beta/models?key=${encodeURIComponent(apiKey)}`,
       );
-      if (!res.ok) return { ok: false, message: `HTTP ${res.status}` };
+      if (!res.ok) return { ok: false, message: `HTTP ${res.status} — check your API key` };
       const json: any = await res.json();
       const models = (json.models ?? []).map((m: any) => String(m.name).replace(/^models\//, ""));
       return { ok: true, message: `ok, ${models.length} models`, models };
@@ -323,7 +468,7 @@ export async function testProviderKey(
       const res = await fetch("https://openrouter.ai/api/v1/key", {
         headers: { Authorization: `Bearer ${apiKey}` },
       });
-      if (!res.ok) return { ok: false, message: `HTTP ${res.status}` };
+      if (!res.ok) return { ok: false, message: `HTTP ${res.status} — check your API key` };
       const json: any = await res.json();
       return { ok: true, message: `ok (${json?.data?.label ?? "key valid"})` };
     }
@@ -331,7 +476,7 @@ export async function testProviderKey(
       const res = await fetch("https://api.groq.com/openai/v1/models", {
         headers: { Authorization: `Bearer ${apiKey}` },
       });
-      if (!res.ok) return { ok: false, message: `HTTP ${res.status}` };
+      if (!res.ok) return { ok: false, message: `HTTP ${res.status} — check your API key` };
       const json: any = await res.json();
       const models = (json.data ?? []).map((m: any) => m.id);
       return { ok: true, message: `ok, ${models.length} models`, models };

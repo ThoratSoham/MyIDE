@@ -4,7 +4,7 @@ import type { QuotaLaneView } from "../../shared/electron-api-types";
 // FR-2.9 / FR-12.3: used and left per lane, reset time, and tokens this minute
 // (Groq). The lanes come straight from the ledger in the main process.
 
-export function QuotaPanel() {
+export function QuotaPanel({ embedded = false }: { embedded?: boolean }) {
   const [lanes, setLanes] = useState<QuotaLaneView[]>([]);
   const [offline, setOffline] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -34,7 +34,13 @@ export function QuotaPanel() {
   }, []);
 
   return (
-    <aside className="flex h-full w-72 flex-shrink-0 flex-col border-l border-[var(--color-border)] bg-[var(--color-surface)] p-3 text-sm">
+    <aside
+      className={
+        embedded
+          ? "flex h-full w-full flex-col overflow-hidden p-3 text-sm"
+          : "flex h-full w-72 flex-shrink-0 flex-col border-l border-[var(--color-border)] bg-[var(--color-surface)] p-3 text-sm"
+      }
+    >
       <div className="mb-2 flex items-center justify-between">
         <h2 className="text-sm font-medium text-[var(--color-text)]">Quota</h2>
         <span className="text-[10px] text-[var(--color-muted)]">free tiers</span>

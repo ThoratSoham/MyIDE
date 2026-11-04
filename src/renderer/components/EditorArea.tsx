@@ -1,9 +1,14 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
-import Editor, { OnChange } from "@monaco-editor/react";
+import Editor, { OnChange, OnMount } from "@monaco-editor/react";
+import { ChevronRight, Command, FileCode2, FolderOpen, Save, Search, X } from "lucide-react";
+import { NovaLogoMark } from "../branding/NovaBrand";
+import { Kbd } from "../design-system/primitives";
+import { useLayoutStore } from "../stores/layoutStore";
+import { usePaletteStore } from "../stores/paletteStore";
+import type { OpenFileTarget } from "../stores/workspaceStore";
 
-// FR-1.3: one Monaco model per open file, tabs across the top. Files are read
-// and written through the typed IPC bridge, so everything stays inside the
-// workspace and overwrites are backed up in the main process (FR-13.3).
+// Tabbed Monaco Code Editor with persisted open tabs, line-jump navigation,
+// breadcrumb path bar, and Nova IDE keyboard-first empty state.
 
 interface Tab {
   path: string;
@@ -13,8 +18,10 @@ interface Tab {
 }
 
 interface Props {
-  openTarget: { path: string; nonce: number } | null;
+  openTarget: OpenFileTarget | null;
   workspaceKey: number;
+  theme: "light" | "dark";
+  onOpenFolder?: () => void;
 }
 
 const EXT_TO_LANG: Record<string, string> = {
@@ -40,35 +47,111 @@ const EXT_TO_LANG: Record<string, string> = {
   ".txt": "text",
 };
 
-export function EditorArea({ openTarget, workspaceKey }: Props) {
+export function EditorArea({ openTarget, workspaceKey, theme, onOpenFolder }: Props) {
   const [tabs, setTabs] = useState<Tab[]>([]);
   const [activePath, setActivePath] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const restoredOnceRef = useRef(false);
+  const pendingLineRef = useRef<number | undefined>(undefined);
+  const editorInstanceRef = useRef<Parameters<OnMount>[0] | null>(null);
+
+  const { hydrated, openTabs, activeTab, syncEditorTabs, setAppMode } = useLayoutStore();
+  const { openCommands, openQuickOpen } = usePaletteStore();
 
   const tabsRef = useRef<Tab[]>([]);
   tabsRef.current = tabs;
 
-  // A new workspace means the old tabs no longer exist.
+  // Restore persisted tabs from layout.json once on startup
+  useEffect(() => {
+    if (!hydrated || restoredOnceRef.current) return;
+    restoredOnceRef.current = true;
+    if (!openTabs || openTabs.length === 0) return;
+
+    let alive = true;
+    void (async () => {
+      const loaded: Tab[] = [];
+      for (const rel of openTabs.slice(0, 15)) {
+        try {
+          const content = await window.electron.fs.readFile(rel);
+          loaded.push({ path: rel, label: baseName(rel), saved: true, content });
+        } catch {
+          /* skip deleted or moved files */
+        }
+      }
+      if (!alive || loaded.length === 0) return;
+      setTabs((prev) => (prev.length > 0 ? prev : loaded));
+      setActivePath((cur) => {
+        if (cur) return cur;
+        if (activeTab && loaded.some((t) => t.path === activeTab)) return activeTab;
+        return loaded[0].path;
+      });
+    })();
+
+    return () => {
+      alive = false;
+    };
+  }, [activeTab, hydrated, openTabs]);
+
+  // Persist tab paths whenever tabs or activePath change
+  useEffect(() => {
+    if (!restoredOnceRef.current) return;
+    syncEditorTabs(
+      tabs.map((t) => t.path),
+      activePath,
+    );
+  }, [activePath, syncEditorTabs, tabs]);
+
+  // Refresh saved open tabs when workspace files change on disk
   useEffect(() => {
     if (workspaceKey === 0) return;
-    setTabs([]);
-    setActivePath(null);
-    setError(null);
+    let alive = true;
+    void (async () => {
+      const next: Tab[] = [];
+      for (const t of tabsRef.current) {
+        if (!t.saved) {
+          next.push(t);
+          continue;
+        }
+        try {
+          const diskContent = await window.electron.fs.readFile(t.path);
+          next.push({ ...t, content: diskContent, saved: true });
+        } catch {
+          /* file no longer in new/changed workspace */
+        }
+      }
+      if (!alive) return;
+      setTabs(next);
+      setActivePath((cur) => (cur && next.some((t) => t.path === cur) ? cur : next[0]?.path ?? null));
+    })();
+    return () => {
+      alive = false;
+    };
   }, [workspaceKey]);
+
+  const jumpToLine = useCallback((line?: number) => {
+    if (!line || !editorInstanceRef.current) return;
+    editorInstanceRef.current.revealLineInCenter(line);
+    editorInstanceRef.current.setPosition({ lineNumber: line, column: 1 });
+    editorInstanceRef.current.focus();
+  }, []);
 
   useEffect(() => {
     if (!openTarget) return;
     const target = openTarget.path;
+    const line = openTarget.line;
     let alive = true;
 
     const run = async () => {
       if (tabsRef.current.some((t) => t.path === target)) {
+        pendingLineRef.current = line;
         setActivePath(target);
+        requestAnimationFrame(() => jumpToLine(line));
         return;
       }
       try {
         const content = await window.electron.fs.readFile(target);
         if (!alive) return;
+        pendingLineRef.current = line;
         setTabs((prev) =>
           prev.some((t) => t.path === target)
             ? prev
@@ -76,6 +159,7 @@ export function EditorArea({ openTarget, workspaceKey }: Props) {
         );
         setActivePath(target);
         setError(null);
+        setTimeout(() => jumpToLine(line), 40);
       } catch (e) {
         if (alive) setError(e instanceof Error ? e.message : String(e));
       }
@@ -85,22 +169,19 @@ export function EditorArea({ openTarget, workspaceKey }: Props) {
     return () => {
       alive = false;
     };
-  }, [openTarget]);
+  }, [jumpToLine, openTarget]);
 
-  const save = useCallback(
-    async (path: string) => {
-      const tab = tabsRef.current.find((t) => t.path === path);
-      if (!tab || tab.saved) return;
-      try {
-        await window.electron.fs.writeFile(path, tab.content);
-        setTabs((prev) => prev.map((t) => (t.path === path ? { ...t, saved: true } : t)));
-        setError(null);
-      } catch (e) {
-        setError(e instanceof Error ? e.message : String(e));
-      }
-    },
-    [],
-  );
+  const save = useCallback(async (path: string) => {
+    const tab = tabsRef.current.find((t) => t.path === path);
+    if (!tab || tab.saved) return;
+    try {
+      await window.electron.fs.writeFile(path, tab.content);
+      setTabs((prev) => prev.map((t) => (t.path === path ? { ...t, saved: true } : t)));
+      setError(null);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    }
+  }, []);
 
   const closeTab = useCallback((path: string) => {
     setTabs((prev) => {
@@ -121,13 +202,21 @@ export function EditorArea({ openTarget, workspaceKey }: Props) {
     );
   };
 
+  const onEditorMount: OnMount = (editor) => {
+    editorInstanceRef.current = editor;
+    if (pendingLineRef.current) {
+      jumpToLine(pendingLineRef.current);
+      pendingLineRef.current = undefined;
+    }
+  };
+
   const active = tabs.find((t) => t.path === activePath) ?? null;
   const lang = active ? EXT_TO_LANG[extOf(active.path)] ?? "plaintext" : "plaintext";
 
-  // FR-1.3: Cmd/Ctrl+S saves the active file.
+  // Cmd/Ctrl+S saves active file; Cmd/Ctrl+W closes active tab
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
-      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "s") {
+      if ((e.metaKey || e.ctrlKey) && !e.shiftKey && e.key.toLowerCase() === "s") {
         e.preventDefault();
         if (activePath) void save(activePath);
       }
@@ -136,41 +225,95 @@ export function EditorArea({ openTarget, workspaceKey }: Props) {
     return () => window.removeEventListener("keydown", handler);
   }, [activePath, save]);
 
+  const breadcrumbs = active ? active.path.split("/") : [];
+
   return (
-    <div className="flex h-full flex-1 flex-col overflow-hidden">
+    <main
+      role="main"
+      aria-label="Code Editor"
+      className="flex h-full flex-1 flex-col overflow-hidden bg-[var(--nova-bg-editor)]"
+    >
       {tabs.length > 0 && (
-        <div className="flex flex-none items-center overflow-x-auto border-b border-[var(--color-border)] bg-[var(--color-surface)] px-2">
-          {tabs.map((t) => (
-            <div
-              key={t.path}
-              className={`group flex items-center gap-2 border-b-2 px-3 py-1.5 text-sm transition-colors
-                ${
-                  t.path === activePath
-                    ? "border-[var(--color-accent-strong)] text-[var(--color-text)]"
-                    : "border-transparent text-[var(--color-muted)] hover:text-[var(--color-text)]"
-                }`}
-            >
+        <>
+          <div
+            role="tablist"
+            aria-label="Open files"
+            className="flex h-9 flex-none items-center overflow-x-auto border-b border-[var(--nova-border)] bg-[var(--nova-bg-panel)] px-1.5"
+          >
+            {tabs.map((t) => {
+              const isActive = t.path === activePath;
+              return (
+                <div
+                  key={t.path}
+                  role="tab"
+                  aria-selected={isActive}
+                  className={`group flex h-full items-center gap-1.5 border-b-2 px-2.5 text-xs transition-colors ${
+                    isActive
+                      ? "border-[var(--nova-accent-bright)] bg-[var(--nova-bg-editor)] text-[var(--nova-text-primary)]"
+                      : "border-transparent text-[var(--nova-text-muted)] hover:bg-[var(--nova-bg-hover)] hover:text-[var(--nova-text-primary)]"
+                  }`}
+                >
+                  <FileCode2 size={13} className="shrink-0 text-[var(--nova-accent-bright)] opacity-80" />
+                  <button
+                    type="button"
+                    onClick={() => setActivePath(t.path)}
+                    className="max-w-[160px] truncate py-1 font-medium"
+                    title={t.path}
+                  >
+                    {t.label}
+                  </button>
+                  {!t.saved && (
+                    <span className="h-2 w-2 rounded-full bg-[var(--nova-warning)]" title="Unsaved changes" />
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => closeTab(t.path)}
+                    aria-label={`Close ${t.label}`}
+                    className="ml-0.5 rounded p-0.5 text-[var(--nova-text-muted)] opacity-0 hover:bg-[var(--nova-bg-active)] hover:text-[var(--nova-danger)] group-hover:opacity-100 focus:opacity-100"
+                    title="Close tab"
+                  >
+                    <X size={12} />
+                  </button>
+                </div>
+              );
+            })}
+          </div>
+
+          {/* Breadcrumb + Save bar */}
+          <div className="flex h-7 flex-none items-center gap-1 border-b border-[var(--nova-border-subtle)] bg-[var(--nova-bg-editor)] px-3 text-[11px] text-[var(--nova-text-muted)]">
+            <div className="flex min-w-0 items-center gap-1 truncate">
+              {breadcrumbs.map((seg, idx) => (
+                <React.Fragment key={`${seg}-${idx}`}>
+                  {idx > 0 && <ChevronRight size={11} className="shrink-0 opacity-50" />}
+                  <span
+                    className={
+                      idx === breadcrumbs.length - 1
+                        ? "truncate font-medium text-[var(--nova-text-secondary)]"
+                        : "truncate"
+                    }
+                  >
+                    {seg}
+                  </span>
+                </React.Fragment>
+              ))}
+            </div>
+            <div className="ml-auto flex shrink-0 items-center gap-2">
+              <span className="font-mono text-[10.5px] uppercase opacity-75">{lang}</span>
               <button
-                onClick={() => setActivePath(t.path)}
-                className="max-w-[160px] truncate"
-                title={t.path}
+                type="button"
+                onClick={() => active && void save(active.path)}
+                disabled={!active || active.saved}
+                className="flex items-center gap-1 rounded border border-[var(--nova-border)] bg-[var(--nova-bg-panel)] px-2 py-0.5 text-[10.5px] text-[var(--nova-text-secondary)] hover:bg-[var(--nova-bg-hover)] disabled:opacity-35"
               >
-                {t.label}
-              </button>
-              {!t.saved && <span className="text-[10px] text-[var(--color-warn)]">●</span>}
-              <button
-                onClick={() => closeTab(t.path)}
-                className="ml-1 rounded text-xs text-[var(--color-muted)] opacity-0 transition-opacity hover:text-[var(--color-negative)] group-hover:opacity-100"
-                title="Close"
-              >
-                ×
+                <Save size={11} />
+                <span>Save</span>
               </button>
             </div>
-          ))}
-        </div>
+          </div>
+        </>
       )}
 
-      <div className="min-h-0 flex-1 overflow-hidden bg-[var(--color-editor-bg)]">
+      <div className="min-h-0 flex-1 overflow-hidden bg-[var(--nova-bg-editor)]">
         {active ? (
           <Editor
             height="100%"
@@ -178,51 +321,100 @@ export function EditorArea({ openTarget, workspaceKey }: Props) {
             path={active.path}
             value={active.content}
             onChange={onChange}
-            theme={themeFor(dataTheme())}
+            onMount={onEditorMount}
+            theme={theme === "dark" ? "vs-dark" : "vs"}
             options={{
               minimap: { enabled: false },
               lineNumbers: "on",
               roundedSelection: true,
               scrollBeyondLastLine: false,
               automaticLayout: true,
-              fontFamily: "ui-monospace, Menlo, Consolas, monospace",
-              fontSize: 14,
+              fontFamily: "var(--nova-font-mono)",
+              fontSize: 13.5,
               tabSize: 2,
               wordWrap: "off",
-              padding: { top: 8 },
+              padding: { top: 10 },
               renderWhitespace: "selection",
+              smoothScrolling: true,
+              cursorBlinking: "smooth",
             }}
           />
         ) : (
-          <div className="flex h-full items-center justify-center text-[var(--color-muted)]">
-            <div className="text-center">
-              <div className="mb-2 text-4xl opacity-20">⌨</div>
-              <div className="text-sm">Open a file from the explorer to start editing</div>
+          <div className="flex h-full items-center justify-center p-6 text-[var(--nova-text-muted)]">
+            <div className="w-full max-w-md space-y-5 text-center">
+              <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-2xl border border-[var(--nova-border)] bg-[var(--nova-bg-panel)] shadow-[var(--nova-shadow-sm)]">
+                <NovaLogoMark size={26} />
+              </div>
+              <div>
+                <h2 className="text-base font-semibold text-[var(--nova-text-primary)]">Nova IDE</h2>
+                <p className="mt-1 text-xs text-[var(--nova-text-muted)]">
+                  Agent-first development powered by smart free-tier &amp; local model routing.
+                </p>
+              </div>
+
+              <div className="space-y-1.5 rounded-xl border border-[var(--nova-border)] bg-[var(--nova-bg-panel)] p-3 text-left text-xs">
+                <ShortcutRow
+                  icon={<Search size={13} />}
+                  label="Quick Open File"
+                  shortcut="Ctrl+P"
+                  onClick={() => openQuickOpen()}
+                />
+                <ShortcutRow
+                  icon={<Command size={13} />}
+                  label="Command Palette"
+                  shortcut="Ctrl+Shift+P"
+                  onClick={() => openCommands()}
+                />
+                <ShortcutRow
+                  icon={<FolderOpen size={13} />}
+                  label="Open Workspace Folder"
+                  shortcut="Ctrl+O"
+                  onClick={() => onOpenFolder?.()}
+                />
+                <ShortcutRow
+                  icon={<FileCode2 size={13} />}
+                  label="Agent Manager (Mission Control)"
+                  shortcut="Ctrl+Shift+M"
+                  onClick={() => setAppMode("manager")}
+                />
+              </div>
             </div>
           </div>
         )}
       </div>
 
       {error && (
-        <div className="flex-none border-t border-[var(--color-negative)] bg-[var(--color-negative)]/10 px-3 py-1 text-xs text-[var(--color-negative)]">
+        <div className="flex-none border-t border-[var(--nova-danger)]/40 bg-[var(--nova-danger-soft)] px-3 py-1.5 text-xs text-[var(--nova-danger)]">
           {error}
         </div>
       )}
+    </main>
+  );
+}
 
-      {active && (
-        <div className="flex flex-none items-center gap-3 border-t border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-1.5 text-xs text-[var(--color-muted)]">
-          <button
-            onClick={() => void save(active.path)}
-            disabled={active.saved}
-            className="rounded border border-[var(--color-border)] px-2 py-0.5 hover:bg-[var(--color-surface-alt)] disabled:opacity-40"
-          >
-            Save
-          </button>
-          <span className="capitalize">{lang}</span>
-          <span className="ml-auto truncate">{active.path}</span>
-        </div>
-      )}
-    </div>
+function ShortcutRow({
+  icon,
+  label,
+  shortcut,
+  onClick,
+}: {
+  icon: React.ReactNode;
+  label: string;
+  shortcut: string;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className="flex w-full items-center justify-between rounded-lg px-2.5 py-1.5 text-[var(--nova-text-secondary)] hover:bg-[var(--nova-bg-hover)] hover:text-[var(--nova-text-primary)]"
+    >
+      <span className="flex items-center gap-2">
+        <span className="text-[var(--nova-accent-bright)]">{icon}</span>
+        <span>{label}</span>
+      </span>
+      <Kbd>{shortcut}</Kbd>
+    </button>
   );
 }
 
@@ -233,12 +425,4 @@ function baseName(path: string): string {
 function extOf(path: string): string {
   const i = path.lastIndexOf(".");
   return i >= 0 ? path.slice(i).toLowerCase() : "";
-}
-
-function dataTheme(): "light" | "dark" {
-  return document.documentElement.getAttribute("data-theme") === "dark" ? "dark" : "light";
-}
-
-function themeFor(t: "light" | "dark") {
-  return t === "dark" ? "vs-dark" : "vs";
 }

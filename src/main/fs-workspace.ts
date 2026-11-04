@@ -3,6 +3,7 @@ import path from "path";
 import os from "os";
 import { app } from "electron";
 import log from "electron-log";
+import type { SearchMatch } from "../shared/electron-api-types";
 
 // M1: workspace rooted at a temp folder with a small seeded sample project so
 // the file tree, editor tabs, and private preview are coherent on first launch.
@@ -74,6 +75,50 @@ export function setWorkspaceRoot(dir: string): string {
   rememberRoot(abs);
   log.info(`workspace root set to ${abs}`);
   return abs;
+}
+
+export interface WorkspaceInfo {
+  path: string;
+  created: boolean;
+  isDefault: boolean;
+}
+
+/** True while we are still on the throw-away start-up folder. */
+export function isUsingDefaultRoot(): boolean {
+  return path.resolve(workspaceRootPath()) === path.resolve(defaultRoot());
+}
+
+/**
+ * PART 2 point 5: when no project folder is open, create
+ * <Documents>/MyIDE-Projects/<short-name-date>, switch to it and report where it
+ * is. When the user already picked a folder we never move them.
+ */
+export function ensureProjectWorkspace(brief: string): WorkspaceInfo {
+  const current = workspaceRootPath();
+  if (!isUsingDefaultRoot()) return { path: current, created: false, isDefault: false };
+
+  const dir = path.join(app.getPath("documents"), "MyIDE-Projects", projectFolderName(brief));
+  const existed = fs.existsSync(dir);
+  fs.mkdirSync(dir, { recursive: true });
+  setWorkspaceRoot(dir);
+  log.info(`project workspace ${existed ? "reused" : "created"}: ${dir}`);
+  return { path: dir, created: !existed, isDefault: false };
+}
+
+/** "make me a coffee shop website" -> "make-me-a-coffee-shop-20261103-1412" */
+export function projectFolderName(brief: string): string {
+  const slug = (brief || "project")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .split("-")
+    .slice(0, 5)
+    .join("-")
+    .slice(0, 40) || "project";
+  const d = new Date();
+  const pad = (n: number) => String(n).padStart(2, "0");
+  const stamp = `${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}-${pad(d.getHours())}${pad(d.getMinutes())}`;
+  return `${slug}-${stamp}`;
 }
 
 function seedIfEmpty(dir: string) {
@@ -290,4 +335,109 @@ function isEnvPath(filePath: string): boolean {
 export function resolveWorkspaceFilePath(workspacePath: string): string {
   const root = workspaceRootPath();
   return path.join(root, workspacePath);
+}
+
+const IGNORED_DIRS = new Set([
+  "node_modules",
+  ".git",
+  "dist",
+  "build",
+  ".next",
+  ".myide",
+  ".novaide",
+  ".cache",
+  "coverage",
+]);
+
+const BINARY_EXTS = new Set([
+  ".png",
+  ".jpg",
+  ".jpeg",
+  ".gif",
+  ".webp",
+  ".ico",
+  ".pdf",
+  ".zip",
+  ".gz",
+  ".tar",
+  ".exe",
+  ".dll",
+  ".node",
+  ".woff",
+  ".woff2",
+  ".ttf",
+  ".mp4",
+  ".webm",
+]);
+
+/** Fast recursive workspace file list for Quick Open (Ctrl+P) & @-mentions. */
+export function listWorkspaceFiles(maxFiles = 2500): string[] {
+  const root = workspaceRootPath();
+  const out: string[] = [];
+  const cap = Math.min(Math.max(50, maxFiles || 2500), 10000);
+
+  const walk = (absDir: string, relPrefix: string) => {
+    if (out.length >= cap) return;
+    let entries: fs.Dirent[];
+    try {
+      entries = fs.readdirSync(absDir, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const d of entries) {
+      if (out.length >= cap) return;
+      if (d.isSymbolicLink()) continue;
+      const rel = relPrefix ? `${relPrefix}/${d.name}` : d.name;
+      if (d.isDirectory()) {
+        if (IGNORED_DIRS.has(d.name)) continue;
+        walk(path.join(absDir, d.name), rel);
+      } else if (d.isFile()) {
+        if (isEnvPath(d.name)) continue;
+        out.push(rel);
+      }
+    }
+  };
+
+  walk(root, "");
+  return out;
+}
+
+/** Fast workspace text search for the Search sidebar tab. */
+export function searchWorkspaceFiles(query: string, maxResults = 150): SearchMatch[] {
+  const q = String(query ?? "").trim();
+  if (!q) return [];
+  const lowerQ = q.toLowerCase();
+  const root = workspaceRootPath();
+  const files = listWorkspaceFiles(2000);
+  const matches: SearchMatch[] = [];
+  const cap = Math.min(Math.max(10, maxResults || 150), 500);
+
+  for (const rel of files) {
+    if (matches.length >= cap) break;
+    const ext = path.extname(rel).toLowerCase();
+    if (BINARY_EXTS.has(ext)) continue;
+    const abs = path.join(root, rel);
+    try {
+      const stat = fs.statSync(abs);
+      if (stat.size > 512_000) continue; // skip >512 KB files
+      const text = fs.readFileSync(abs, "utf8");
+      if (!text.toLowerCase().includes(lowerQ)) continue;
+      const lines = text.split(/\r?\n/);
+      for (let i = 0; i < lines.length; i++) {
+        const idx = lines[i].toLowerCase().indexOf(lowerQ);
+        if (idx !== -1) {
+          matches.push({
+            path: rel,
+            line: i + 1,
+            column: idx + 1,
+            preview: lines[i].trim().slice(0, 180),
+          });
+          if (matches.length >= cap) break;
+        }
+      }
+    } catch {
+      /* ignore unreadable files */
+    }
+  }
+  return matches;
 }

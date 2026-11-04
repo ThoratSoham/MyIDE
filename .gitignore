@@ -7,9 +7,11 @@ out/
 release/
 *.tsbuildinfo
 
-# MyIDE runtime data (workspace, builds, verification, trash, backups)
+# MyIDE / Nova IDE runtime data (workspace, builds, verification, trash, backups)
 .myide/
 .myide-workspace/
+.nova/checkpoints/
+.diag/
 
 # Logs
 *.log

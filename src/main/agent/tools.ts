@@ -3,24 +3,56 @@ import path from "path";
 import { spawn } from "child_process";
 import log from "electron-log";
 import { verifyWebsite, type VerifyReport } from "../quality/verifier";
+import type { UserQuestionOption } from "../../shared/electron-api-types";
 
 // FR-5.2: the agent tool set. Every tool runs in the main process. Paths stay
 // inside the workspace (FR-5.3), .env files can never be read, deletes go to
-// trash and overwrites are backed up (FR-13.3), and commands need approval with
-// a timeout and a process-tree kill (FR-5.4).
+// trash and overwrites are backed up (FR-13.3), commands need approval with
+// a timeout and a process-tree kill (FR-5.4), and ask_user pauses the loop
+// until the user answers or dismisses (PART 3).
 
 export type ApprovalDecision = "once" | "always" | "deny";
+
+export interface AskUserArgs {
+  question: string;
+  options: UserQuestionOption[];
+  allowMultiple: boolean;
+}
+
+export interface AskUserToolResult {
+  answered: boolean;
+  selectedLabels: string[];
+  otherText?: string;
+  dismissed?: boolean;
+  timedOut?: boolean;
+}
 
 export interface AgentState {
   workspaceRoot: string;
   myideDir: string;
   allowedCommands: Set<string>;
-  // FR-5.6: markComplete is refused if an HTML file changed and verifyWebsite
-  // has not passed after the last change.
   changedHtml: Set<string>;
+  changedFiles: Map<string, "created" | "edited" | "deleted">;
   verifyPassedSinceChange: boolean;
   lastVerify: VerifyReport | null;
   plan: PlanStep[];
+}
+
+export function verifyWrittenFile(abs: string): string | null {
+  try {
+    const st = fs.statSync(abs);
+    if (!st.isFile()) return "the path is not a file";
+    if (st.size <= 0) return "the file is empty (0 bytes)";
+    return null;
+  } catch (e) {
+    return `the file is not on disk (${(e as Error).message})`;
+  }
+}
+
+export function recordChange(state: AgentState, rel: string, change: "created" | "edited" | "deleted"): void {
+  const key = rel.split("\\").join("/");
+  if (change === "deleted") state.changedFiles.set(key, "deleted");
+  else if (state.changedFiles.get(key) !== "created") state.changedFiles.set(key, change);
 }
 
 export interface PlanStep {
@@ -33,8 +65,11 @@ export interface PlanStep {
 export interface ToolContext {
   state: AgentState;
   requestApproval: (command: string, reason: string) => Promise<ApprovalDecision>;
+  askUser?: (args: AskUserArgs) => Promise<AskUserToolResult>;
   onPreview?: (workspacePath: string) => void;
+  onAgentOutput?: (chunk: string) => void;
   signal?: { cancelled: boolean };
+  abortSignal?: AbortSignal;
 }
 
 export interface ToolResult {
@@ -50,7 +85,6 @@ export interface ToolSpec {
   run: (args: any, ctx: ToolContext) => Promise<ToolResult>;
 }
 
-// Dangerous commands are always blocked, whatever the user chooses (FR-5.4).
 const BLOCKED_PATTERNS: RegExp[] = [
   /\brm\s+-rf\s+\/(?!\S)/i,
   /\bformat\s+[a-z]:/i,
@@ -83,10 +117,15 @@ function isEnvFile(p: string): boolean {
   return name === ".env" || name.startsWith(".env.");
 }
 
-const TEXT_LIMIT = 40_000;
+// Truncate large tool results while keeping both head and tail context.
+const TEXT_LIMIT = 12_000;
 
-function clip(s: string, limit = TEXT_LIMIT): string {
-  return s.length > limit ? `${s.slice(0, limit)}\n... (${s.length - limit} more characters)` : s;
+export function clip(s: string, limit = TEXT_LIMIT): string {
+  if (s.length <= limit) return s;
+  const headLen = Math.floor(limit * 0.7);
+  const tailLen = Math.max(0, limit - headLen - 80);
+  const omitted = s.length - headLen - tailLen;
+  return `${s.slice(0, headLen)}\n... [${omitted} characters truncated] ...\n${s.slice(s.length - tailLen)}`;
 }
 
 function backupIfExists(root: string, abs: string, rel: string): void {
@@ -95,6 +134,40 @@ function backupIfExists(root: string, abs: string, rel: string): void {
   fs.mkdirSync(backupRoot, { recursive: true });
   const dest = path.join(backupRoot, `${rel.replace(/[\\/]/g, "_")}.${Date.now()}.bak`);
   fs.copyFileSync(abs, dest);
+}
+
+export function describeToolCall(name: string, args: any): string {
+  const p = args?.path ? String(args.path) : "";
+  switch (name) {
+    case "readFile":
+      return `Reading file ${p || ""}…`.trim();
+    case "writeFile":
+      return `Writing file ${p || ""}…`.trim();
+    case "editFile":
+      return `Editing file ${p || ""}…`.trim();
+    case "listDir":
+      return `Listing directory ${p || "/"}…`;
+    case "deleteFile":
+      return `Moving ${p || "file"} to trash…`;
+    case "moveFile":
+      return `Moving ${args?.from ?? ""} → ${args?.to ?? ""}…`;
+    case "createDir":
+      return `Creating folder ${p || ""}…`;
+    case "executeCommand":
+      return `Running command: ${String(args?.command ?? "").slice(0, 48)}…`;
+    case "verifyWebsite":
+      return `Verifying website ${p || ""}…`;
+    case "openPreview":
+      return `Opening preview ${p || ""}…`;
+    case "updatePlan":
+      return "Updating plan…";
+    case "ask_user":
+      return `Asking user: ${String(args?.question ?? "").slice(0, 48)}…`;
+    case "markComplete":
+      return "Completing task…";
+    default:
+      return `Running ${name}…`;
+  }
 }
 
 export const TOOLS: ToolSpec[] = [
@@ -109,7 +182,7 @@ export const TOOLS: ToolSpec[] = [
       const entries = fs.readdirSync(abs, { withFileTypes: true })
         .filter((e) => e.name !== "node_modules" && e.name !== ".git")
         .map((e) => `${e.isDirectory() ? "[dir] " : "      "}${e.name}`);
-      return { ok: true, output: entries.length ? entries.join("\n") : "(empty directory)" };
+      return { ok: true, output: clip(entries.length ? entries.join("\n") : "(empty directory)") };
     },
   },
   {
@@ -138,11 +211,20 @@ export const TOOLS: ToolSpec[] = [
       if (!rel) return { ok: false, output: "writeFile needs a path." };
       const abs = insideWorkspace(ctx.state.workspaceRoot, rel);
       if (isEnvFile(abs)) return { ok: false, output: "Refused: .env files are never written (FR-5.3)." };
+      const existed = fs.existsSync(abs);
       backupIfExists(ctx.state.workspaceRoot, abs, rel);
       fs.mkdirSync(path.dirname(abs), { recursive: true });
       fs.writeFileSync(abs, content, "utf8");
+      const problem = verifyWrittenFile(abs);
+      if (problem) return { ok: false, output: `The write did NOT succeed: ${problem}` };
+      recordChange(ctx.state, rel, existed ? "edited" : "created");
       noteWrite(ctx.state, rel);
-      return { ok: true, output: `Wrote ${rel} (${content.length} characters).` };
+      const bytes = fs.statSync(abs).size;
+      return {
+        ok: true,
+        output: `Wrote ${rel} (${bytes} bytes on disk, verified).`,
+        data: { path: rel, bytes, verified: true },
+      };
     },
   },
   {
@@ -168,8 +250,11 @@ export const TOOLS: ToolSpec[] = [
       }
       backupIfExists(ctx.state.workspaceRoot, abs, rel);
       fs.writeFileSync(abs, text.replace(find, replace), "utf8");
+      const problem = verifyWrittenFile(abs);
+      if (problem) return { ok: false, output: `The edit did NOT succeed: ${problem}` };
+      recordChange(ctx.state, rel, "edited");
       noteWrite(ctx.state, rel);
-      return { ok: true, output: `Edited ${rel}.` };
+      return { ok: true, output: `Edited ${rel} (${fs.statSync(abs).size} bytes on disk, verified).` };
     },
   },
   {
@@ -191,6 +276,7 @@ export const TOOLS: ToolSpec[] = [
         fs.copyFileSync(abs, dest);
         fs.unlinkSync(abs);
       }
+      recordChange(ctx.state, rel, "deleted");
       return { ok: true, output: `Moved ${rel} to .myide/trash (recoverable).` };
     },
   },
@@ -251,7 +337,76 @@ export const TOOLS: ToolSpec[] = [
         }
       }
 
-      return runShell(command, cwd);
+      return runShell(command, cwd, ctx.onAgentOutput, ctx.abortSignal);
+    },
+  },
+  {
+    name: "ask_user",
+    description:
+      "Ask the user a decision question with 2-4 options when you need their input before continuing. " +
+      "Pauses execution until the user answers or dismisses.",
+    params: {
+      question: { type: "string", description: "Clear question to show the user.", required: true },
+      options: {
+        type: "array",
+        description: "2 to 4 options: [{ label: string, description?: string }].",
+        required: true,
+      },
+      allowMultiple: {
+        type: "boolean",
+        description: "Allow selecting multiple options (default false).",
+      },
+    },
+    async run(args, ctx) {
+      const question = String(args?.question ?? "").trim();
+      if (!question) {
+        return { ok: false, output: "ask_user requires a non-empty 'question' string." };
+      }
+      const rawOptions = Array.isArray(args?.options) ? args.options : [];
+      const normalized: UserQuestionOption[] = rawOptions
+        .map((o: any): UserQuestionOption | null => {
+          if (typeof o === "string" && o.trim()) return { label: o.trim() };
+          if (o && typeof o === "object" && typeof o.label === "string" && o.label.trim()) {
+            return {
+              label: o.label.trim(),
+              description: typeof o.description === "string" && o.description.trim() ? o.description.trim() : undefined,
+            };
+          }
+          return null;
+        })
+        .filter((x: UserQuestionOption | null): x is UserQuestionOption => x !== null)
+        .slice(0, 4);
+
+      if (normalized.length < 2) {
+        return {
+          ok: false,
+          output: "ask_user requires between 2 and 4 options, each with { label, description? }.",
+        };
+      }
+
+      if (!ctx.askUser) {
+        return { ok: true, output: "no answer", data: { answered: false } };
+      }
+
+      const allowMultiple = Boolean(args?.allowMultiple);
+      const res = await ctx.askUser({ question, options: normalized, allowMultiple });
+      if (!res.answered || res.dismissed || res.timedOut) {
+        return {
+          ok: true,
+          output: "no answer",
+          data: { answered: false, dismissed: res.dismissed, timedOut: res.timedOut },
+        };
+      }
+
+      const parts: string[] = [];
+      if (res.selectedLabels.length > 0) parts.push(...res.selectedLabels);
+      if (res.otherText && res.otherText.trim()) parts.push(`Other: ${res.otherText.trim()}`);
+      const answerText = parts.length > 0 ? parts.join(", ") : "no answer";
+      return {
+        ok: true,
+        output: answerText,
+        data: { answered: true, selectedLabels: res.selectedLabels, otherText: res.otherText },
+      };
     },
   },
   {
@@ -380,11 +535,21 @@ export function loadAllowedCommands(myideDir: string): Set<string> {
 }
 
 const COMMAND_TIMEOUT_MS = 120_000;
-const MAX_OUTPUT = 16_000;
+const MAX_OUTPUT = 10_000;
 
-async function runShell(command: string, cwd: string): Promise<ToolResult> {
+async function runShell(
+  command: string,
+  cwd: string,
+  onOutput?: (chunk: string) => void,
+  abortSignal?: AbortSignal,
+): Promise<ToolResult> {
   return new Promise((resolve) => {
+    if (abortSignal?.aborted) {
+      resolve({ ok: false, output: "[cancelled by user]" });
+      return;
+    }
     const isWin = process.platform === "win32";
+    onOutput?.(`$ ${command}\n`);
     const child = spawn(isWin ? "cmd.exe" : "/bin/sh", isWin ? ["/d", "/s", "/c", command] : ["-c", command], {
       cwd,
       windowsHide: true,
@@ -393,27 +558,44 @@ async function runShell(command: string, cwd: string): Promise<ToolResult> {
 
     let out = "";
     let done = false;
-    const finish = (ok: boolean, extra = "") => {
-      if (done) return;
-      done = true;
-      clearTimeout(timer);
-      const body = clip((out + extra).trim(), MAX_OUTPUT);
-      resolve({ ok, output: body || (ok ? "(no output)" : "(command failed with no output)") });
-    };
-
-    const timer = setTimeout(() => {
-      // Kill the whole process tree, not just the shell (FR-5.4).
+    const killTree = () => {
       try {
         if (isWin && child.pid) spawn("taskkill", ["/pid", String(child.pid), "/T", "/F"]);
         else child.kill("SIGKILL");
       } catch {
         /* ignore */
       }
+    };
+
+    const onAbort = () => {
+      killTree();
+      finish(false, "\n[cancelled by user]");
+    };
+    if (abortSignal) abortSignal.addEventListener("abort", onAbort, { once: true });
+
+    const finish = (ok: boolean, extra = "") => {
+      if (done) return;
+      done = true;
+      clearTimeout(timer);
+      if (abortSignal) abortSignal.removeEventListener("abort", onAbort);
+      const body = clip((out + extra).trim(), MAX_OUTPUT);
+      if (extra) onOutput?.(extra);
+      resolve({ ok, output: body || (ok ? "(no output)" : "(command failed with no output)") });
+    };
+
+    const timer = setTimeout(() => {
+      killTree();
       finish(false, `\n[timed out after ${COMMAND_TIMEOUT_MS / 1000}s and was stopped]`);
     }, COMMAND_TIMEOUT_MS);
 
-    child.stdout?.on("data", (d) => (out += d.toString()));
-    child.stderr?.on("data", (d) => (out += d.toString()));
+    child.stdout?.on("data", (d) => {
+      out += d.toString();
+      onOutput?.(d.toString());
+    });
+    child.stderr?.on("data", (d) => {
+      out += d.toString();
+      onOutput?.(d.toString());
+    });
     child.on("error", (e) => finish(false, `\n[could not start: ${e.message}]`));
     child.on("close", (code) => finish(code === 0, code === 0 ? "" : `\n[exit code ${code}]`));
   });
@@ -428,14 +610,18 @@ export function hashText(s: string): string {
   return String(h >>> 0);
 }
 
-/** A compact tool catalogue for the prompt — the "checklist" the model fills in. */
+let cachedToolsCatalogue: string | null = null;
+
+/** A compact tool catalogue for the prompt — cached since the tool specs are static. */
 export function toolsForPrompt(): string {
-  return TOOLS.map((t) => {
+  if (cachedToolsCatalogue) return cachedToolsCatalogue;
+  cachedToolsCatalogue = TOOLS.map((t) => {
     const params = Object.entries(t.params)
       .map(([k, v]) => `${k}${v.required ? "" : "?"}: ${v.type}`)
       .join(", ");
     return `- ${t.name}(${params}) — ${t.description}`;
   }).join("\n");
+  return cachedToolsCatalogue;
 }
 
 export function findTool(name: string): ToolSpec | undefined {

@@ -16,6 +16,15 @@ export function parseJsonLoose(raw: string): ParseJsonResult {
   let text = raw.trim();
   let repaired = false;
 
+  // 0. A reply that is already valid JSON must never be touched. Repair steps
+  // below (fence stripping in particular) would mangle a JSON object whose
+  // answer field happens to contain a code fence, e.g. {"answer":"```html ..."}.
+  try {
+    return { ok: true, value: JSON.parse(text), repaired: false };
+  } catch {
+    /* not plain JSON — fall through to the repairs */
+  }
+
   // 1. Strip code fences.
   const fence = FENCE.exec(text);
   if (fence) {

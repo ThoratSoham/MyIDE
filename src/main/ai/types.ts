@@ -1,3 +1,5 @@
+import type { CostTier, LaneExhaustedDetail } from "../../shared/electron-api-types";
+
 // Task class drives chain order (FR-3.1).
 export type TaskClass = "reasoning" | "general" | "autocomplete";
 
@@ -7,6 +9,9 @@ export interface Lane {
   provider: ProviderId;
   model: string;
   role: "reasoning" | "general" | "autocomplete";
+  priority?: number;
+  maxTokens?: number;
+  costTier?: CostTier;
   // Defaults from section 5. These are editable defaults; the ledger and
   // headers/error text can override them at runtime (FR-2.4).
   limits: LaneLimits;
@@ -42,7 +47,12 @@ export const TIMEOUT_CHUNK_MS = 90000;
 // Health state for a lane (FR-2.3, FR-2.5, FR-2.7). Used by the router to
 // decide whether a lane is usable for a given request.
 export interface LaneHealth {
-  deadUntil: number | null; // epoch ms, 24h from a 403/404 (FR-2.7)
+  deadSession?: boolean; // permanently dead for this session (404 / 400 unavailable)
+  deadReason?: string;
+  suggestedModel?: string;
+  cooldownUntil?: number | null; // epoch ms, per-lane 429 backoff cooldown
+  cooldownReason?: string;
+  deadUntil: number | null; // legacy field kept for compatibility
   removedUntil: number | null; // epoch ms, until daily reset (FR-2.5)
   minuteRequestCount: number;
   minuteTokenCount: number; // Groq TPM for the rolling minute
@@ -55,6 +65,9 @@ export interface ProviderRequest {
   schema?: object;
   temperature?: number;
   maxTokens?: number;
+  signal?: AbortSignal;
+  onDelta?: (chunk: string) => void;
+  cacheStaticPrefix?: boolean;
 }
 
 export interface Message {
@@ -67,8 +80,22 @@ export type ProviderOutcome =
   | { ok: false; error: ProviderError };
 
 export interface ProviderError {
-  kind: "rateLimitMinute" | "rateLimitDay" | "tooBig" | "badRequest" | "unauthorized" | "modelDead" | "serverError" | "empty" | "networkError" | "timeout" | "unmapped";
+  kind:
+    | "rateLimitMinute"
+    | "rateLimitDay"
+    | "tooBig"
+    | "badRequest"
+    | "unauthorized"
+    | "modelDead"
+    | "serverError"
+    | "empty"
+    | "networkError"
+    | "timeout"
+    | "cancelled"
+    | "unmapped";
+  status?: number;
   message: string;
+  suggestedModel?: string;
   retryAfterMs?: number;
   waitUntilMs?: number;
   headers?: Record<string, string>;
@@ -82,6 +109,13 @@ export interface ProviderAdapter {
   discoverLimits?: (res: ProviderError) => Partial<LaneLimits> | null;
   configured: () => boolean;
 }
+
+export type RouterLaneEvent =
+  | { type: "model-dead"; lane: Lane; reason: string; suggestedModel?: string }
+  | { type: "backoff"; lane: Lane; delayMs: number; attempt: number; maxRetries: number; reason: string }
+  | { type: "switch-lane"; fromLane?: Lane; toLane: Lane; reason: string };
+
+export { type LaneExhaustedDetail };
 
 // Per-provider usable model list (FR-2.1).
 export function usableModels(

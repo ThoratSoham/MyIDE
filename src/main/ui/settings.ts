@@ -1,22 +1,19 @@
-export type Theme = "system" | "dark" | "light";
+import type { Settings as SharedSettings } from "../../shared/electron-api-types";
 
-export interface Settings {
-  theme: Theme;
-  defaultMode: "fast" | "balanced" | "best";
-  chromePath: string;
-  autoResumeAtQuotaReset: boolean;
-  providerOverrides: {
-    geminiApiKeyLast4: string;
-    openrouterApiKeyLast4: string;
-    groqApiKeyLast4: string;
-  };
-}
+// One source of truth: the renderer, the preload bridge and the main process all
+// use the shared Settings shape. This file only supplies the defaults.
+export type Settings = SharedSettings;
+export type Theme = Settings["theme"];
 
 export const getDefaultSettings = (): Settings => ({
-  theme: "system",
+  theme: "dark",
   defaultMode: "balanced",
   chromePath: "",
   autoResumeAtQuotaReset: true,
+  // PART 2 point 5: off means "create <Documents>/MyIDE-Projects/<name> silently".
+  askWorkspaceEachTime: false,
+  terminalFontSize: 13,
+  askQuestionTimeoutSec: 120,
   providerOverrides: {
     geminiApiKeyLast4: "",
     openrouterApiKeyLast4: "",
