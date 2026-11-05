@@ -10,12 +10,7 @@ const { setProviderKey, setSettings } = require("../dist/main/store");
 
 function startMockServer(handler) {
   return new Promise((resolve) => {
-    const sockets = new Set();
     const server = http.createServer(handler);
-    server.on("connection", (socket) => {
-      sockets.add(socket);
-      socket.on("close", () => sockets.delete(socket));
-    });
     server.listen(0, "127.0.0.1", () => {
       const addr = server.address();
       resolve({
@@ -23,8 +18,14 @@ function startMockServer(handler) {
         url: `http://127.0.0.1:${addr.port}`,
         close: () =>
           new Promise((r) => {
-            for (const s of sockets) s.destroy();
-            server.close(() => r());
+            try {
+              if (typeof server.closeAllConnections === "function") {
+                server.closeAllConnections();
+              }
+            } catch (_) {}
+            server.close(() => {
+              setImmediate(r);
+            });
           }),
       });
     });
