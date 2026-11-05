@@ -16,6 +16,11 @@ export interface LaneCapabilities {
   supportsJsonMode?: boolean;
   supportsResponseSchema?: boolean;
   supportsNativeTools?: boolean;
+  supportsVision?: boolean;
+  isReasoning?: boolean;
+  maxOutputTokens?: number;
+  contextWindow?: number;
+  roleTags?: string[];
 }
 
 // Lane = one provider + one model.
@@ -26,7 +31,12 @@ export interface Lane {
   role: "reasoning" | "general" | "autocomplete";
   priority?: number;
   maxTokens?: number;
+  maxOutputTokens?: number;
+  contextWindow?: number;
   costTier?: CostTier;
+  supportsVision?: boolean;
+  isReasoning?: boolean;
+  roleTags?: string[];
   taskClasses?: TaskClass[];
   capabilities?: LaneCapabilities;
   // Defaults from section 5. These are editable defaults; the ledger and

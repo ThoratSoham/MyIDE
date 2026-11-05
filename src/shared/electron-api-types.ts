@@ -31,6 +31,11 @@ export interface Settings {
   selectedLocalModel?: string;
   // PHASE 8: optional offscreen BrowserWindow website verification.
   headlessBrowserVerify?: boolean;
+  // Capability-Aware & Style settings
+  minCodegenOutput?: number;
+  waitBudgetSeconds?: number;
+  waitForBestLane?: boolean;
+  defaultStyle?: string;
   providerOverrides: {
     geminiApiKeyLast4: string;
     openrouterApiKeyLast4: string;
@@ -58,6 +63,10 @@ export const DEFAULT_SETTINGS: Settings = {
   lmStudioBaseUrl: "http://127.0.0.1:1234",
   selectedLocalModel: "",
   headlessBrowserVerify: false,
+  minCodegenOutput: 16000,
+  waitBudgetSeconds: 20,
+  waitForBestLane: true,
+  defaultStyle: "minimal-editorial",
   providerOverrides: {
     geminiApiKeyLast4: "",
     openrouterApiKeyLast4: "",
@@ -118,10 +127,15 @@ export interface ModelConfigEntry {
   provider: ProviderKeyId;
   priority: number;
   maxTokens: number;
+  maxOutputTokens?: number;
+  contextWindow?: number;
   costTier: CostTier;
+  supportsVision?: boolean;
   supportsJsonMode?: boolean;
   supportsResponseSchema?: boolean;
   supportsNativeTools?: boolean;
+  isReasoning?: boolean;
+  roleTags?: string[];
   taskClasses?: string[];
 }
 

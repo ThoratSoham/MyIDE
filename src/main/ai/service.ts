@@ -21,7 +21,7 @@ import type {
 } from "./types";
 import { buildLanes, buildLocalLanes, defaultLaneLimits, PROVIDER_CONFIGS } from "./providers";
 import { Ledger, nextResetMs } from "./ledger";
-import { Router, abortableSleep, formatLocalTime, type SendResult } from "./router";
+import { Router, abortableSleep, formatLocalTime, type SendResult, type RouterSendOptions } from "./router";
 import { makeRealProviders, discoverLimitsFromHeaders } from "./real-providers";
 import {
   detectLocalModels,
@@ -63,14 +63,7 @@ export interface QuotaLaneView {
   suggestedModel?: string;
 }
 
-export interface CompleteOptions {
-  schema?: object;
-  maxTokens?: number;
-  expectedOutputTokens?: number;
-  signal?: AbortSignal;
-  onDelta?: (chunk: string) => void;
-  cacheStaticPrefix?: boolean;
-}
+export interface CompleteOptions extends RouterSendOptions {}
 
 export interface CompleteResult extends SendResult {
   pause?: boolean;

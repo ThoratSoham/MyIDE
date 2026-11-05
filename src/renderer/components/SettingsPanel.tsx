@@ -769,6 +769,44 @@ export function SettingsPanel({ settings, onChange, onClose, onOpenModels }: Pro
                         <div className="text-[10.5px] text-[var(--nova-text-muted)]">Captures real browser runtime console errors and offscreen screenshots for website tasks.</div>
                       </div>
                     </label>
+
+                    <label className="flex items-start gap-2 rounded-lg border border-[var(--nova-border-subtle)] bg-[var(--nova-bg-surface)] p-2.5">
+                      <input
+                        type="checkbox"
+                        checked={s.waitForBestLane !== false}
+                        onChange={(e) => onChange({ waitForBestLane: e.target.checked })}
+                        className="mt-0.5"
+                      />
+                      <div>
+                        <div className="font-medium text-[var(--nova-text-primary)]">Wait for best lane (keeps model consistent)</div>
+                        <div className="text-[10.5px] text-[var(--nova-text-muted)]">Waits for preferred lane on short 429/cooldowns instead of silently falling to weaker models.</div>
+                      </div>
+                    </label>
+
+                    <div className="grid grid-cols-2 gap-2 pt-1">
+                      <label className="flex flex-col gap-1 text-[11px] text-[var(--nova-text-secondary)]">
+                        <span className="font-medium text-[var(--nova-text-primary)]">Wait budget (seconds)</span>
+                        <input
+                          type="number"
+                          min={0}
+                          max={60}
+                          value={s.waitBudgetSeconds ?? 20}
+                          onChange={(e) => onChange({ waitBudgetSeconds: Number(e.target.value) || 20 })}
+                          className="w-full rounded border border-[var(--nova-border)] bg-[var(--nova-bg-app)] px-2 py-1 text-xs text-[var(--nova-text-primary)]"
+                        />
+                      </label>
+                      <label className="flex flex-col gap-1 text-[11px] text-[var(--nova-text-secondary)]">
+                        <span className="font-medium text-[var(--nova-text-primary)]">Min codegen output tokens</span>
+                        <input
+                          type="number"
+                          min={4096}
+                          step={1024}
+                          value={s.minCodegenOutput ?? 16000}
+                          onChange={(e) => onChange({ minCodegenOutput: Number(e.target.value) || 16000 })}
+                          className="w-full rounded border border-[var(--nova-border)] bg-[var(--nova-bg-app)] px-2 py-1 text-xs text-[var(--nova-text-primary)]"
+                        />
+                      </label>
+                    </div>
                   </div>
                 </div>
               </div>

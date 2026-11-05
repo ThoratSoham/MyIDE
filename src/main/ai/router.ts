@@ -159,6 +159,21 @@ export function computeExponentialBackoffMs(
   return floor + jitter;
 }
 
+export interface RouterSendOptions {
+  schema?: object;
+  maxTokens?: number;
+  expectedOutputTokens?: number;
+  signal?: AbortSignal;
+  onDelta?: (chunk: string) => void;
+  cacheStaticPrefix?: boolean;
+  pinnedLaneId?: string;
+  minOutputTokens?: number;
+  waitForBestLane?: boolean;
+  waitBudgetSeconds?: number;
+  onWaitCountdown?: (info: { laneId: string; model: string; secondsRemaining: number }) => void;
+  lowReasoningEffort?: boolean;
+}
+
 export class Router {
   constructor(public config: RouterConfig) {}
 
@@ -178,14 +193,7 @@ export class Router {
   async send(
     taskClass: TaskClass,
     messages: ProviderRequest["messages"],
-    options?: {
-      schema?: object;
-      maxTokens?: number;
-      expectedOutputTokens?: number;
-      signal?: AbortSignal;
-      onDelta?: (chunk: string) => void;
-      cacheStaticPrefix?: boolean;
-    },
+    options?: RouterSendOptions,
   ): Promise<SendResult> {
     if (options?.signal?.aborted) {
       return {
@@ -195,7 +203,38 @@ export class Router {
       };
     }
 
-    const candidates = this.resolveCandidateLanes(taskClass);
+    const laneDetails: LaneExhaustedDetail[] = [];
+    let rawCandidates = this.resolveCandidateLanes(taskClass);
+
+    // Filter for minimum output capacity (e.g. minCodegenOutput for site build)
+    if (options?.minOutputTokens && options.minOutputTokens > 0) {
+      const minReq = options.minOutputTokens;
+      rawCandidates = rawCandidates.filter((l) => {
+        const outCap = l.maxOutputTokens ?? l.limits.maxTokensPerRequest ?? 4096;
+        if (outCap < minReq) {
+          laneDetails.push({
+            laneId: l.id,
+            provider: l.provider,
+            model: l.model,
+            status: "skipped_size",
+            reason: `Ineligible for single-shot codegen: output cap (${outCap}) < ${minReq} tokens`,
+            resumeAtMs: null,
+          });
+          return false;
+        }
+        return true;
+      });
+    }
+
+    // Pin model for the whole run: prioritize pinned lane to front
+    if (options?.pinnedLaneId) {
+      const pinned = rawCandidates.find((c) => c.id === options.pinnedLaneId);
+      if (pinned) {
+        rawCandidates = [pinned, ...rawCandidates.filter((c) => c.id !== options.pinnedLaneId)];
+      }
+    }
+    const candidates = rawCandidates;
+
     const expectedOutputTokens = options?.expectedOutputTokens ?? 512;
     const baseBackoffMs = this.config.baseBackoffMs ?? 1_000;
     const serverBackoffMs = this.config.serverBackoffMs ?? 800;
@@ -207,7 +246,6 @@ export class Router {
     const fullPrompt = promptText(messages);
     const baseEstimate = estimateTokens(fullPrompt, expectedOutputTokens);
 
-    const laneDetails: LaneExhaustedDetail[] = [];
     let prevFailedLane: Lane | undefined;
     let prevFailureReason = "";
 
@@ -293,31 +331,58 @@ export class Router {
       }
 
       if (!isLaneUsable(lane, health, laneEstimate, now)) {
-        const resumeAtMs =
-          (health.removedUntil && health.removedUntil > now ? health.removedUntil : null) ??
-          (health.cooldownUntil && health.cooldownUntil > now ? health.cooldownUntil : null) ??
-          (health.minuteRequestCount >= lane.limits.rpm ||
-          (lane.limits.tpm != null && health.minuteTokenCount >= lane.limits.tpm)
-            ? now + 60_000
-            : null);
-        const isQuota = Boolean(health.removedUntil && health.removedUntil > now);
-        const reason = isQuota
-          ? `Daily quota exhausted until ${formatLocalTime(health.removedUntil!)}`
-          : health.cooldownUntil && health.cooldownUntil > now
-          ? `Rate-limit cooldown until ${formatLocalTime(health.cooldownUntil)}${
-              health.cooldownReason ? ` (${health.cooldownReason.slice(0, 120)})` : ""
-            }`
-          : `Per-minute rate limit (${lane.limits.rpm} RPM) active`;
-        logEvent(`unusable:${lane.id}`, `lane ${lane.id} unusable: ${reason}`);
-        laneDetails.push({
-          laneId: lane.id,
-          provider: lane.provider,
-          model: lane.model,
-          status: isQuota ? "quota" : "cooldown",
-          reason,
-          resumeAtMs,
-        });
-        continue;
+        const waitBudgetSec = options?.waitBudgetSeconds ?? 20;
+        const allowWait = options?.waitForBestLane !== false && waitBudgetSec > 0;
+        const cooldownRemainingMs =
+          health.cooldownUntil && health.cooldownUntil > now ? health.cooldownUntil - now : null;
+        const cooldownSec = cooldownRemainingMs != null ? Math.ceil(cooldownRemainingMs / 1000) : null;
+
+        // Wait-for-best-lane: if cooldown is within waitBudgetSeconds, wait for this lane!
+        if (
+          allowWait &&
+          cooldownSec != null &&
+          cooldownSec <= waitBudgetSec &&
+          (!options?.minOutputTokens || (lane.maxOutputTokens ?? 4096) >= options.minOutputTokens)
+        ) {
+          log.info(`[router] waiting ${cooldownSec}s for ${lane.id} to keep quality consistent`);
+          while (health.cooldownUntil && health.cooldownUntil > Date.now()) {
+            if (options?.signal?.aborted) {
+              return { ok: false, cancelled: true, error: { kind: "cancelled", message: "Cancelled by user" } };
+            }
+            const sec = Math.max(1, Math.ceil((health.cooldownUntil - Date.now()) / 1000));
+            options?.onWaitCountdown?.({ laneId: lane.id, model: lane.model, secondsRemaining: sec });
+            await sleepFn(Math.min(500, health.cooldownUntil - Date.now()), options?.signal);
+          }
+          if (!isLaneUsable(lane, health, laneEstimate, Date.now())) {
+            continue;
+          }
+        } else {
+          const resumeAtMs =
+            (health.removedUntil && health.removedUntil > now ? health.removedUntil : null) ??
+            (health.cooldownUntil && health.cooldownUntil > now ? health.cooldownUntil : null) ??
+            (health.minuteRequestCount >= lane.limits.rpm ||
+            (lane.limits.tpm != null && health.minuteTokenCount >= lane.limits.tpm)
+              ? now + 60_000
+              : null);
+          const isQuota = Boolean(health.removedUntil && health.removedUntil > now);
+          const reason = isQuota
+            ? `Daily quota exhausted until ${formatLocalTime(health.removedUntil!)}`
+            : health.cooldownUntil && health.cooldownUntil > now
+            ? `Rate-limit cooldown until ${formatLocalTime(health.cooldownUntil)}${
+                health.cooldownReason ? ` (${health.cooldownReason.slice(0, 120)})` : ""
+              }`
+            : `Per-minute rate limit (${lane.limits.rpm} RPM) active`;
+          logEvent(`unusable:${lane.id}`, `lane ${lane.id} unusable: ${reason}`);
+          laneDetails.push({
+            laneId: lane.id,
+            provider: lane.provider,
+            model: lane.model,
+            status: isQuota ? "quota" : "cooldown",
+            reason,
+            resumeAtMs,
+          });
+          continue;
+        }
       }
 
       if (prevFailedLane) {

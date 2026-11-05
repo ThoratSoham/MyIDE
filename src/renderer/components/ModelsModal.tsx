@@ -211,8 +211,11 @@ export function ModelsModal({ onClose }: Props) {
                   <th className="px-2 py-1.5">Priority</th>
                   <th className="px-2 py-1.5">Provider</th>
                   <th className="px-2 py-1.5">Model Slug (id)</th>
-                  <th className="px-2 py-1.5">Max Tokens</th>
+                  <th className="px-2 py-1.5">Context</th>
+                  <th className="px-2 py-1.5">Max Output</th>
                   <th className="px-2 py-1.5">Cost Tier</th>
+                  <th className="px-2 py-1.5">Capabilities</th>
+                  <th className="px-2 py-1.5">Roles</th>
                   <th className="px-2 py-1.5"></th>
                 </tr>
               </thead>
@@ -260,8 +263,19 @@ export function ModelsModal({ onClose }: Props) {
                         step={512}
                         value={row.maxTokens}
                         onChange={(e) => updateRow(i, { maxTokens: Number(e.target.value) || 4096 })}
-                        aria-label={`Max tokens for row ${i + 1}`}
-                        className="w-24 rounded border border-[var(--color-border)] bg-[var(--color-base)] px-2 py-1 text-xs"
+                        aria-label={`Context/max tokens for row ${i + 1}`}
+                        className="w-20 rounded border border-[var(--color-border)] bg-[var(--color-base)] px-2 py-1 text-xs"
+                      />
+                    </td>
+                    <td className="px-2 py-1.5">
+                      <input
+                        type="number"
+                        min={512}
+                        step={512}
+                        value={row.maxOutputTokens ?? row.maxTokens}
+                        onChange={(e) => updateRow(i, { maxOutputTokens: Number(e.target.value) || 4096 })}
+                        aria-label={`Max output tokens for row ${i + 1}`}
+                        className="w-20 rounded border border-[var(--color-border)] bg-[var(--color-base)] px-2 py-1 text-xs"
                       />
                     </td>
                     <td className="px-2 py-1.5">
@@ -277,6 +291,51 @@ export function ModelsModal({ onClose }: Props) {
                           </option>
                         ))}
                       </select>
+                    </td>
+                    <td className="px-2 py-1.5">
+                      <div className="flex items-center gap-2 text-[11px]">
+                        <label title="Vision supported" className="flex items-center gap-0.5 cursor-pointer">
+                          <input
+                            type="checkbox"
+                            checked={Boolean(row.supportsVision)}
+                            onChange={(e) => updateRow(i, { supportsVision: e.target.checked })}
+                          />
+                          <span>👁️</span>
+                        </label>
+                        <label title="Reasoning model (reserve 30% thinking overhead)" className="flex items-center gap-0.5 cursor-pointer">
+                          <input
+                            type="checkbox"
+                            checked={Boolean(row.isReasoning)}
+                            onChange={(e) => updateRow(i, { isReasoning: e.target.checked })}
+                          />
+                          <span>🧠</span>
+                        </label>
+                        <label title="JSON Mode" className="flex items-center gap-0.5 cursor-pointer">
+                          <input
+                            type="checkbox"
+                            checked={row.supportsJsonMode !== false}
+                            onChange={(e) => updateRow(i, { supportsJsonMode: e.target.checked })}
+                          />
+                          <span>{`{}`}</span>
+                        </label>
+                      </div>
+                    </td>
+                    <td className="px-2 py-1.5">
+                      <input
+                        type="text"
+                        value={(row.roleTags ?? []).join(", ")}
+                        onChange={(e) =>
+                          updateRow(i, {
+                            roleTags: e.target.value
+                              .split(",")
+                              .map((s) => s.trim())
+                              .filter(Boolean),
+                          })
+                        }
+                        placeholder="e.g. codegen, fast, vision"
+                        aria-label={`Role tags for row ${i + 1}`}
+                        className="w-28 rounded border border-[var(--color-border)] bg-[var(--color-base)] px-2 py-1 text-xs font-mono"
+                      />
                     </td>
                     <td className="px-2 py-1.5 text-right">
                       <button

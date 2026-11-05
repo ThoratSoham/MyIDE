@@ -9,6 +9,7 @@ import type { AgentEvent } from "../agent/loop";
 import type { AgentState, ApprovalDecision } from "../agent/tools";
 import { verifyWebsite, type VerifyIssue, type VerifyReport } from "../quality/verifier";
 import { currentTelemetry } from "../telemetry";
+import { getSettings } from "../store";
 import { formatManifestPromptInstruction, resolveSiteManifest, type SiteManifest } from "../website/manifest";
 import {
   buildMissingAssetsPrompt,
@@ -30,6 +31,7 @@ export interface SingleShotWebsiteOptions {
   onPreview?: (rel: string) => void;
   onAgentOutput?: (chunk: string) => void;
   onSuggestedFiles?: (files: SuggestedFile[]) => void;
+  pinnedLaneId?: string;
 }
 
 export function buildSingleShotSystemPrompt(manifest: SiteManifest): string {
@@ -162,13 +164,28 @@ async function callSingleShotModel(
   ok: boolean;
   content: string;
   modelId?: string;
+  laneUsed?: any;
   stoppedMsg?: string;
 }> {
   const promptChars = messages.reduce((sum, m) => sum + (m.content?.length ?? 0), 0);
+  const settings = getSettings();
+  const minOutput = taskClass === "codegen" ? (settings.minCodegenOutput ?? 16000) : undefined;
+
   const res = await ai.complete(taskClass, messages, {
     expectedOutputTokens: 2400,
     signal: opts.abortController.signal,
     cacheStaticPrefix: true,
+    pinnedLaneId: opts.pinnedLaneId,
+    minOutputTokens: minOutput,
+    waitForBestLane: settings.waitForBestLane !== false,
+    waitBudgetSeconds: settings.waitBudgetSeconds ?? 20,
+    onWaitCountdown: (info) => {
+      opts.onEvent({
+        type: "assistant",
+        text: `Waiting ${info.secondsRemaining}s for ${info.model} to keep quality consistent…`,
+        model: info.laneId,
+      });
+    },
     onDelta: (chunk) => {
       // Stream non-file-tag brief commentary if any, without dumping raw 300-line HTML into chat bubble
       if (!chunk.includes("<file") && chunk.length < 160) {
@@ -222,7 +239,7 @@ async function callSingleShotModel(
     completionChars: content.length,
   });
 
-  return { ok: true, content, modelId: res.laneUsed?.id };
+  return { ok: true, content, modelId: res.laneUsed?.id, laneUsed: res.laneUsed };
 }
 
 export async function runSingleShotWebsite(
@@ -245,6 +262,10 @@ export async function runSingleShotWebsite(
   const first = await callSingleShotModel(ai, buildMessages, opts);
   if (!first.ok) {
     return first.stoppedMsg ?? "Website build stopped.";
+  }
+  // Pin lane for remainder of this run (repairs & reference closure) to keep model & style consistent
+  if (first.modelId) {
+    opts.pinnedLaneId = first.modelId;
   }
 
   const parsedTags = parseFileTags(first.content);
