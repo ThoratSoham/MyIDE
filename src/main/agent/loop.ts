@@ -158,7 +158,7 @@ const AGENT_SCHEMA = {
 // static context repeatedly and prefix prompt caching remains stable across turns.
 const staticSystemPromptCache = new Map<string, string>();
 
-export function createAgentState(workspaceRoot: string): AgentState {
+export function createAgentState(workspaceRoot: string, runId?: string): AgentState {
   lastKnownWorkspaceRoot = workspaceRoot;
   const myideDir = path.join(workspaceRoot, ".myide");
   fs.mkdirSync(myideDir, { recursive: true });
@@ -168,6 +168,7 @@ export function createAgentState(workspaceRoot: string): AgentState {
   return {
     workspaceRoot,
     myideDir,
+    runId,
     allowedCommands: loadAllowedCommands(myideDir),
     changedHtml: new Set(),
     changedFiles: new Map(),

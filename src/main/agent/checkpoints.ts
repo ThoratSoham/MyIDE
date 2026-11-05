@@ -6,6 +6,7 @@ export interface FileSnapshot {
   relPath: string;
   existedBefore: boolean;
   originalContent: string | null;
+  previousContent?: string | null;
   hashBefore: string | null;
   timestamp: number;
 }
@@ -89,12 +90,26 @@ export function snapshotFileForRun(workspaceRoot: string, runId: string, relPath
   if (!runId) return;
   const norm = normalizeRel(relPath);
   const manifest = loadRunManifest(workspaceRoot, runId);
+  const abs = path.join(workspaceRoot, norm);
+
   if (manifest.files[norm]) {
-    // Already snapshotted for this run
+    // If the file was initially created during this run (originalContent === null), but is now
+    // being overwritten/edited, capture its current content as previousContent so diff calculation
+    // reflects lines added/removed during this rewrite.
+    try {
+      if (fs.existsSync(abs) && fs.statSync(abs).isFile()) {
+        const currentContent = fs.readFileSync(abs, "utf8");
+        if (manifest.files[norm].originalContent === null && !manifest.files[norm].previousContent) {
+          manifest.files[norm].previousContent = currentContent;
+          saveRunManifest(workspaceRoot, manifest);
+        }
+      }
+    } catch {
+      /* ignore */
+    }
     return;
   }
 
-  const abs = path.join(workspaceRoot, norm);
   let existed = false;
   let content: string | null = null;
   let hash: string | null = null;
@@ -118,6 +133,7 @@ export function snapshotFileForRun(workspaceRoot: string, runId: string, relPath
     relPath: norm,
     existedBefore: existed,
     originalContent: content,
+    previousContent: null,
     hashBefore: hash,
     timestamp: Date.now(),
   };
@@ -165,7 +181,7 @@ export function getRunFileDiff(workspaceRoot: string, runId: string, relPath: st
   const manifest = loadRunManifest(workspaceRoot, runId);
   const snap = manifest.files[norm];
 
-  const before = snap?.originalContent ?? "";
+  const before = snap?.originalContent ?? snap?.previousContent ?? "";
   const abs = path.join(workspaceRoot, norm);
   let after = "";
   let isDeleted = false;

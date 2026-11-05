@@ -7,6 +7,7 @@ import { runHeadlessBrowserVerify } from "../quality/headless-verify";
 import { getSettings } from "../store";
 import { currentTelemetry } from "../telemetry";
 import { snapshotFileForRun } from "./checkpoints";
+import { sanitizeHtmlDocument, validateHtmlDocument } from "../website/validator";
 import type { UserQuestionOption } from "../../shared/electron-api-types";
 import {
   applyMultiEditsAtomically,
@@ -56,6 +57,13 @@ export function verifyWrittenFile(abs: string): string | null {
     const st = fs.statSync(abs);
     if (!st.isFile()) return "the path is not a file";
     if (st.size <= 0) return "the file is empty (0 bytes)";
+    if (abs.endsWith(".html") || abs.endsWith(".htm")) {
+      const text = fs.readFileSync(abs, "utf8");
+      const validation = validateHtmlDocument(text);
+      if (!validation.ok) {
+        return validation.error ?? "Invalid HTML document structure (duplicate document root tags).";
+      }
+    }
     return null;
   } catch (e) {
     return `the file is not on disk (${(e as Error).message})`;
@@ -511,10 +519,16 @@ export const TOOLS: ToolSpec[] = [
     },
     async run(args, ctx) {
       const rel = String(args?.path ?? "");
-      const content = String(args?.content ?? "");
+      let content = String(args?.content ?? "");
       if (!rel) return { ok: false, output: "writeFile needs a path." };
       const abs = insideWorkspace(ctx.state.workspaceRoot, rel);
       if (isEnvFile(abs)) return { ok: false, output: "Refused: .env files are never written (FR-5.3)." };
+      if (abs.endsWith(".html") || abs.endsWith(".htm")) {
+        const val = validateHtmlDocument(content);
+        if (!val.ok) {
+          content = sanitizeHtmlDocument(content);
+        }
+      }
       const existed = fs.existsSync(abs);
       backupIfExists(ctx.state.workspaceRoot, abs, rel, ctx.state.runId);
       fs.mkdirSync(path.dirname(abs), { recursive: true });

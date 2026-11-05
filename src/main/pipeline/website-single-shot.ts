@@ -9,6 +9,12 @@ import type { AgentEvent } from "../agent/loop";
 import type { AgentState, ApprovalDecision } from "../agent/tools";
 import { verifyWebsite, type VerifyIssue, type VerifyReport } from "../quality/verifier";
 import { currentTelemetry } from "../telemetry";
+import { formatManifestPromptInstruction, resolveSiteManifest, type SiteManifest } from "../website/manifest";
+import {
+  buildMissingAssetsPrompt,
+  checkReferenceClosure,
+  inlineOrStubMissingAssetsLocally,
+} from "../website/reference-closure";
 
 // PHASE 2B: Merged single-shot Website pipeline (Brief -> Build all files in 1 call -> Local Verify -> up to 2 targeted snippet repairs).
 
@@ -26,29 +32,31 @@ export interface SingleShotWebsiteOptions {
   onSuggestedFiles?: (files: SuggestedFile[]) => void;
 }
 
-const SINGLE_SHOT_SYSTEM_PROMPT = [
-  "You are Nova IDE's single-shot frontend architect.",
-  "Emit ALL complete website files in a SINGLE response using <file path=\"...\">...</file> blocks.",
-  "Required files: index.html, css/style.css, js/main.js (plus any inline/local SVG assets if referenced).",
-  "Format strictly:",
-  "<file path=\"index.html\">",
-  "<!DOCTYPE html>...",
-  "</file>",
-  "<file path=\"css/style.css\">",
-  "...",
-  "</file>",
-  "<file path=\"js/main.js\">",
-  "...",
-  "</file>",
-  "Quality & Accessibility Rules (enforced by local verifier):",
-  "- Exactly ONE <h1> in the hero; use <h2> inside every <section> (never skip heading levels).",
-  "- At least 650 characters of real, domain-specific visible copy (zero lorem/ipsum/TODO/example.com/click here).",
-  "- WCAG AA contrast >= 4.5:1 on all text; body font-size >= 16px; tap targets (a, button, input) >= 44x44px.",
-  "- Responsive layout with zero horizontal overflow at 390px, 768px, and 1440px viewports.",
-  "- Every content block must be visible by default without requiring JS scroll animations.",
-  "- Every local href/src referenced in index.html MUST be emitted as a <file path=\"...\"> block.",
-  "- Do NOT wrap <file> contents in markdown ``` fences.",
-].join("\n");
+export function buildSingleShotSystemPrompt(manifest: SiteManifest): string {
+  const manifestInstruction = formatManifestPromptInstruction(manifest);
+  return [
+    "You are Nova IDE's single-shot frontend architect.",
+    "Emit complete website files in a SINGLE response using <file path=\"...\">...</file> blocks.",
+    "",
+    manifestInstruction,
+    "",
+    "Quality & Accessibility Rules (enforced by local verifier):",
+    "- Exactly ONE <h1> in the hero; use <h2> inside every <section> (never skip heading levels).",
+    "- At least 650 characters of real, domain-specific visible copy (zero lorem/ipsum/TODO/example.com/click here).",
+    "- WCAG AA contrast >= 4.5:1 on all text; body font-size >= 16px; tap targets (a, button, input) >= 44x44px.",
+    "- Responsive layout with zero horizontal overflow at 390px, 768px, and 1440px viewports.",
+    "- Every content block must be visible by default without requiring JS scroll animations.",
+    "- Every local href/src referenced in HTML MUST exist in the site manifest or be emitted.",
+    "- Do NOT wrap <file> contents in markdown ``` fences.",
+    "- Valid HTML structure: exactly one <!DOCTYPE html>, one <html>, and one <body> tag.",
+  ].join("\n");
+}
+
+const SINGLE_SHOT_SYSTEM_PROMPT = buildSingleShotSystemPrompt({
+  entry: "index.html",
+  files: [{ path: "index.html", purpose: "Self-contained page with inline styles and scripts" }],
+  selfContained: true,
+});
 
 function extractRelevantSnippets(
   workspaceRoot: string,
@@ -222,8 +230,12 @@ export async function runSingleShotWebsite(
   state: AgentState,
   opts: SingleShotWebsiteOptions,
 ): Promise<string> {
+  state.runId = opts.runId;
+  const manifest = resolveSiteManifest({ brief: opts.brief });
+  const systemPrompt = buildSingleShotSystemPrompt(manifest);
+
   const buildMessages: Message[] = [
-    { role: "system", content: SINGLE_SHOT_SYSTEM_PROMPT },
+    { role: "system", content: systemPrompt },
     {
       role: "user",
       content: `Build this website and emit all files in one response using <file path="...">...</file> tags:\n\n${opts.brief}`,
@@ -281,6 +293,78 @@ export async function runSingleShotWebsite(
       });
     },
   );
+
+  // Check reference closure (PHASE 1)
+  const knownFiles = new Map<string, string>();
+  for (const tag of parsedTags) {
+    knownFiles.set(tag.path, tag.content);
+  }
+  const closure = checkReferenceClosure(state.workspaceRoot, knownFiles);
+  if (!closure.valid) {
+    opts.onEvent({
+      type: "assistant",
+      text: `Resolving ${closure.missing.length} missing referenced asset(s): ${closure.missing.map((m) => m.normalizedPath).join(", ")}…`,
+      model: first.modelId,
+    });
+    const missingMessages: Message[] = [
+      {
+        role: "system",
+        content:
+          "You are Nova IDE's asset generator. Emit complete <file path=\"...\">...</file> blocks ONLY for the missing files listed.",
+      },
+      { role: "user", content: buildMissingAssetsPrompt(closure.missing) },
+    ];
+    const missingRes = await callSingleShotModel(ai, missingMessages, opts, "codegen");
+    if (missingRes.ok) {
+      const missingTags = parseFileTags(missingRes.content);
+      if (missingTags.length > 0) {
+        await applyParsedFileTags(
+          missingTags,
+          state,
+          {
+            requestApproval: opts.requestApproval,
+            onPreview: opts.onPreview,
+            onAgentOutput: opts.onAgentOutput,
+            signal: opts.signal,
+            abortSignal: opts.abortController.signal,
+          },
+          (info) => {
+            currentTelemetry()?.recordToolCall();
+            opts.onEvent({
+              type: "tool",
+              name: "writeFile",
+              args: { path: info.path },
+              ok: info.ok,
+              output: info.output,
+              summaryLabel: `Generating missing asset ${info.path}`,
+            });
+          },
+        );
+        for (const t of missingTags) knownFiles.set(t.path, t.content);
+      }
+    }
+
+    // Re-check closure and resolve locally if anything is still missing
+    const secondClosure = checkReferenceClosure(state.workspaceRoot, knownFiles);
+    if (!secondClosure.valid) {
+      const indexRel = "index.html";
+      const indexAbs = path.join(state.workspaceRoot, indexRel);
+      if (fs.existsSync(indexAbs)) {
+        const currentHtml = fs.readFileSync(indexAbs, "utf8");
+        const fallback = inlineOrStubMissingAssetsLocally(currentHtml, secondClosure.missing);
+        if (fallback.updatedHtml !== currentHtml) {
+          fs.writeFileSync(indexAbs, fallback.updatedHtml, "utf8");
+          knownFiles.set(indexRel, fallback.updatedHtml);
+        }
+        for (const stub of fallback.stubsToCreate) {
+          const stubAbs = path.join(state.workspaceRoot, stub.path);
+          fs.mkdirSync(path.dirname(stubAbs), { recursive: true });
+          fs.writeFileSync(stubAbs, stub.content, "utf8");
+          knownFiles.set(stub.path, stub.content);
+        }
+      }
+    }
+  }
 
   // Run local verifier on index.html
   const indexAbs = path.join(state.workspaceRoot, "index.html");

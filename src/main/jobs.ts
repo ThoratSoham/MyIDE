@@ -754,7 +754,7 @@ export class JobManager {
 
   private async runWebsite(job: ActiveJob): Promise<void> {
     const root = this.deps.workspaceRoot();
-    const state = createAgentState(root);
+    const state = createAgentState(root, job.id);
     job.agentState = state;
     hop("chat", job.traceId, 5, "main: writing starter template (index.html, css/style.css, js/main.js)");
     await this.seedStarter(job, state);
@@ -790,7 +790,7 @@ export class JobManager {
 
   private async runAgentJob(job: ActiveJob): Promise<void> {
     const root = this.deps.workspaceRoot();
-    const state = createAgentState(root);
+    const state = createAgentState(root, job.id);
     job.agentState = state;
     const freeSaver = getSettings().freeTierSaver !== false;
     const isReadOnlyExplain =
