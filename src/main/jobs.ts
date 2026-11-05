@@ -978,10 +978,11 @@ export class JobManager {
             model: e.model,
             streaming: false,
             ts: Date.now(),
+            visualReview: e.visualReview,
           };
           this.appendOrUpdateMessage(msg);
         } else {
-          this.pushMessage({ role: "assistant", text: e.summary, model: e.model });
+          this.pushMessage({ role: "assistant", text: e.summary, model: e.model, visualReview: e.visualReview });
         }
         break;
       }

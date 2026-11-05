@@ -24,11 +24,8 @@ function startMockServer(handler) {
               }
             } catch (_) {}
             server.close(() => {
-              setImmediate(r);
+              setTimeout(r, 20);
             });
-            try {
-              server.unref();
-            } catch (_) {}
           }),
       });
     });

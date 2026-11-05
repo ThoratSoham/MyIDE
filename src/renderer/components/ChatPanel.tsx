@@ -9,6 +9,7 @@ import type {
   ProviderKeyId,
   RunStats,
   UserQuestionResponse,
+  VisualReviewSummary,
 } from "../../shared/electron-api-types";
 import { estimateRun, INTENT_LABELS, INTENT_OPTIONS, routeIntent } from "../../shared/intent";
 import { Markdown } from "./Markdown";
@@ -903,8 +904,106 @@ function MessageRow({
         <PopupQuestionHistoryCard record={m.userQuestion} onRespond={onRespondQuestion} />
       )}
       {m.files && m.files.length > 0 && <FilesCard files={m.files} />}
+      {m.visualReview && <VisualReviewCard review={m.visualReview} />}
       <ActionRow m={m} onAction={onAction} />
       {m.runStats && <RunStatsLine stats={m.runStats} />}
+    </div>
+  );
+}
+
+function VisualReviewCard({ review }: { review: VisualReviewSummary }) {
+  const [expanded, setExpanded] = useState(false);
+  const score = review.visualScore;
+  const scoreColor =
+    score >= 7
+      ? "text-emerald-500 bg-emerald-500/10 border-emerald-500/20"
+      : score >= 5
+      ? "text-amber-500 bg-amber-500/10 border-amber-500/20"
+      : "text-rose-500 bg-rose-500/10 border-rose-500/20";
+
+  return (
+    <div className="mt-2.5 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-2.5 text-xs">
+      <div className="flex items-center justify-between gap-2 border-b border-[var(--color-border)] pb-2">
+        <span className="font-semibold text-[var(--color-text)]">Preview Review</span>
+        <div className="flex items-center gap-1.5 text-[10.5px]">
+          <span
+            className={`rounded px-1.5 py-0.5 border font-medium ${
+              review.structurePassed
+                ? "text-emerald-500 bg-emerald-500/10 border-emerald-500/20"
+                : "text-amber-500 bg-amber-500/10 border-amber-500/20"
+            }`}
+          >
+            Structure {review.structurePassed ? "✓" : "⚠"}
+          </span>
+          <span
+            className={`rounded px-1.5 py-0.5 border font-medium ${
+              review.assetsPassed
+                ? "text-emerald-500 bg-emerald-500/10 border-emerald-500/20"
+                : "text-amber-500 bg-amber-500/10 border-amber-500/20"
+            }`}
+          >
+            Assets {review.assetsPassed ? "✓" : "⚠"}
+          </span>
+          <span className={`rounded px-1.5 py-0.5 border font-bold ${scoreColor}`}>
+            Visual {score}/10
+          </span>
+        </div>
+      </div>
+
+      {/* Thumbnails */}
+      <div className="mt-2 flex items-center gap-2">
+        {review.desktopScreenshot && (
+          <div
+            className="group relative cursor-pointer overflow-hidden rounded border border-[var(--color-border)] bg-black/20"
+            onClick={() => setExpanded(!expanded)}
+            title="Click to toggle expanded preview"
+          >
+            <img
+              src={review.desktopScreenshot}
+              alt="Desktop Preview (1280px)"
+              className={`transition-all ${expanded ? "h-36 w-auto" : "h-14 w-20 object-cover"}`}
+            />
+            <span className="absolute bottom-1 right-1 rounded bg-black/60 px-1 text-[8px] text-white">
+              Desktop
+            </span>
+          </div>
+        )}
+        {review.mobileScreenshot && (
+          <div
+            className="group relative cursor-pointer overflow-hidden rounded border border-[var(--color-border)] bg-black/20"
+            onClick={() => setExpanded(!expanded)}
+            title="Click to toggle expanded preview"
+          >
+            <img
+              src={review.mobileScreenshot}
+              alt="Mobile Preview (390px)"
+              className={`transition-all ${expanded ? "h-36 w-auto" : "h-14 w-9 object-cover"}`}
+            />
+            <span className="absolute bottom-1 right-1 rounded bg-black/60 px-1 text-[8px] text-white">
+              Mobile
+            </span>
+          </div>
+        )}
+      </div>
+
+      {/* Issues list */}
+      {review.issues && review.issues.length > 0 && (
+        <div className="mt-2.5 space-y-1.5">
+          <div className="text-[10px] font-semibold uppercase text-[var(--color-muted)]">
+            Visual findings ({review.issues.length})
+          </div>
+          <ul className="space-y-1 text-[11px]">
+            {review.issues.map((iss, idx) => (
+              <li key={idx} className="rounded bg-[var(--color-base)] p-1.5">
+                <div className="font-medium text-[var(--color-text)]">
+                  <span className="text-[var(--color-accent)]">[{iss.area}]</span> {iss.problem}
+                </div>
+                <div className="mt-0.5 text-[10px] text-[var(--color-muted)]">💡 Fix: {iss.fix}</div>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
     </div>
   );
 }

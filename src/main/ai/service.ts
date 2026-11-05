@@ -450,6 +450,17 @@ export class AIService {
     return this.lanes;
   }
 
+  isProviderConfigured(providerId: ProviderId): boolean {
+    if (providerId === "offline") return true;
+    if (providerId === "ollama") {
+      return getSettings().localModelsEnabled !== false && this.localState.ollamaOnline;
+    }
+    if (providerId === "lmstudio") {
+      return getSettings().localModelsEnabled !== false && this.localState.lmStudioOnline;
+    }
+    return !!getProviderKey(providerId as ProviderKeyId);
+  }
+
   getPreferredLane(role: TaskClass = "codegen"): Lane | undefined {
     return this.lanesForRole(role)[0];
   }

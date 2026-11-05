@@ -327,6 +327,24 @@ export interface ChatAction {
   };
 }
 
+export interface VisualReviewIssue {
+  area: string;
+  problem: string;
+  fix: string;
+  severity: "error" | "warning";
+}
+
+export interface VisualReviewSummary {
+  visualScore: number;
+  structurePassed: boolean;
+  assetsPassed: boolean;
+  desktopScreenshot?: string;
+  mobileScreenshot?: string;
+  issues: VisualReviewIssue[];
+  runtimeErrors?: string[];
+  evaluatedWithVision?: boolean;
+}
+
 export interface ChatMessage {
   // Stable identity. The renderer keys messages by this id and always appends
   // or updates — it must never lose an earlier message (PART 1 fix).
@@ -351,6 +369,7 @@ export interface ChatMessage {
   files?: ChangedFile[];
   // Per-run telemetry summary persisted in session JSON (PHASE 0).
   runStats?: RunStats;
+  visualReview?: VisualReviewSummary;
   action?: ChatAction;
   actions?: ChatAction[];
 }

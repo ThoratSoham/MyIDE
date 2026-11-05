@@ -25,6 +25,7 @@ import {
   type StylePack,
 } from "../website/style-packs";
 import { runStagedWebsite } from "../website/staged-builder";
+import { runVisualReview } from "../website/visual-review";
 
 // PHASE 2B: Merged single-shot Website pipeline (Brief -> Build all files in 1 call -> Local Verify -> up to 2 targeted snippet repairs).
 
@@ -350,8 +351,14 @@ export async function runSingleShotWebsite(
       outDir: path.join(state.myideDir, "verify"),
     });
     state.lastVerify = report;
+    const visualReview = await runVisualReview({
+      workspaceRoot: state.workspaceRoot,
+      router: typeof ai.getRouter === "function" ? ai.getRouter() : undefined,
+      visionLane: undefined,
+      signal: opts.abortController.signal,
+    });
     const summary = `Staged build completed with ${staged.files.length} file(s) across 4 stages.`;
-    opts.onEvent({ type: "done", summary, model: preferredLane.id });
+    opts.onEvent({ type: "done", summary, model: preferredLane.id, visualReview });
     return summary;
   }
 
@@ -585,6 +592,67 @@ export async function runSingleShotWebsite(
     });
   }
 
+  const visionLane = ai.getLanes?.()?.find(
+    (l) => l.capabilities?.supportsVision && (ai.isProviderConfigured ? ai.isProviderConfigured(l.provider) : true),
+  );
+
+  const visualReview = await runVisualReview({
+    workspaceRoot: state.workspaceRoot,
+    router: typeof ai.getRouter === "function" ? ai.getRouter() : undefined,
+    visionLane,
+    signal: opts.abortController.signal,
+  });
+
+  // If visual score is low (< 7) and repair rounds remain, run a targeted repair round for visual issues
+  if (visualReview.visualScore < 7 && repairRound < MAX_WEBSITE_REPAIR_ROUNDS && visualReview.issues.length > 0) {
+    repairRound += 1;
+    opts.onEvent({
+      type: "assistant",
+      text: `Visual review score: **${visualReview.visualScore}/10**. Running targeted visual repair round...`,
+    });
+    const visualIssuesText = visualReview.issues
+      .map((i) => `• [${i.area}] ${i.problem} -> Fix: ${i.fix}`)
+      .join("\n");
+    const visualRepairMessages: Message[] = [
+      {
+        role: "system",
+        content: `You are an expert CSS & UI designer. Fix the following visual review issues in index.html and css/style.css:\n${visualIssuesText}\nEmit only updated file tags: <file path="...">...</file>`,
+      },
+      {
+        role: "user",
+        content: `Fix these visual issues in the website files:\n${visualIssuesText}`,
+      },
+    ];
+
+    const visualFix = await callSingleShotModel(ai, visualRepairMessages, opts);
+    if (visualFix.ok && visualFix.content) {
+      const fixParsed = parseFileTags(visualFix.content);
+      if (fixParsed.length > 0) {
+        await applyParsedFileTags(
+          fixParsed,
+          state,
+          {
+            requestApproval: opts.requestApproval,
+            onPreview: opts.onPreview,
+            onAgentOutput: opts.onAgentOutput,
+            signal: opts.signal,
+            abortSignal: opts.abortController.signal,
+          },
+          (info) => {
+            opts.onEvent({
+              type: "tool",
+              name: "writeFile",
+              args: { path: info.path },
+              ok: info.ok,
+              output: `Visual repair applied to ${info.path}`,
+              summaryLabel: `Visual repair: ${info.path}`,
+            });
+          },
+        );
+      }
+    }
+  }
+
   const fileNames = writeSummary.written.map((w) => w.path).join(", ");
   const verifyNote = !report.verified
     ? "browser verifier skipped"
@@ -592,7 +660,7 @@ export async function runSingleShotWebsite(
     ? `verified clean${repairRound > 0 ? ` after ${repairRound} repair round(s)` : " on first pass"}`
     : `${report.issues.filter((i) => i.severity === "error").length} issue(s) remain after ${repairRound} repair round(s)`;
 
-  const summary = `Built website (${fileNames || "index.html"}) — ${verifyNote}.`;
-  opts.onEvent({ type: "done", summary, model: lastModelId });
+  const summary = `Built website (${fileNames || "index.html"}) — ${verifyNote} (visual score: ${visualReview.visualScore}/10).`;
+  opts.onEvent({ type: "done", summary, model: lastModelId, visualReview });
   return summary;
 }

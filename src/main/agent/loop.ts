@@ -3,6 +3,7 @@ import path from "path";
 import log from "electron-log";
 import type { AIService } from "../ai/service";
 import type { LaneExhaustedDetail, Message } from "../ai/types";
+import type { VisualReviewSummary } from "../../shared/electron-api-types";
 import { formatLocalTime } from "../ai/router";
 import { estimateTokens } from "../ai/tokenize";
 import { parseJsonLoose } from "../quality/json-repair";
@@ -46,7 +47,7 @@ export type AgentEvent =
       options: string[];
     }
   | { type: "paused"; reason: string; options: string[] }
-  | { type: "done"; summary: string; model?: string };
+  | { type: "done"; summary: string; model?: string; visualReview?: VisualReviewSummary };
 
 export interface AgentOptions {
   taskMd: string;
