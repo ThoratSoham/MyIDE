@@ -48,6 +48,16 @@ const EXAMPLES: { label: string; text: string }[] = [
   { label: "Explain code", text: "Explain this code and what it does" },
 ];
 
+const STYLE_CHIPS: Array<{ id: string; label: string; keywords: string[] }> = [
+  { id: "neo-brutalism", label: "Neo-Brutalism", keywords: ["neo-brutalism", "neobrutalism", "brutalist", "brutalism"] },
+  { id: "glassmorphism", label: "Glassmorphism", keywords: ["glassmorphism", "glassmorphic", "frosted glass"] },
+  { id: "minimal-editorial", label: "Minimal", keywords: ["minimal-editorial", "minimal editorial", "minimalist"] },
+  { id: "dark-neon-tech", label: "Dark Neon", keywords: ["dark-neon-tech", "dark neon", "cyberpunk"] },
+  { id: "soft-pastel-playful", label: "Soft Pastel", keywords: ["soft-pastel-playful", "soft pastel", "playful"] },
+  { id: "corporate-clean", label: "Corporate", keywords: ["corporate-clean", "corporate clean", "clean saas"] },
+  { id: "retro-y2k", label: "Retro Y2K", keywords: ["retro-y2k", "retro y2k", "y2k", "vaporwave"] },
+];
+
 export function ChatPanel({
   job,
   defaultMode,
@@ -159,6 +169,36 @@ export function ChatPanel({
   }, [pinned, deferredText]);
 
   const estimate = useMemo(() => estimateRun(detection.intent, mode), [detection.intent, mode]);
+
+  const isWebsiteIntent = detection.intent === "website" || pinned === "website";
+
+  const activeStyleChip = useMemo(() => {
+    const lower = text.toLowerCase();
+    for (const chip of STYLE_CHIPS) {
+      if (chip.keywords.some((kw) => lower.includes(kw))) {
+        return chip.id;
+      }
+    }
+    return null;
+  }, [text]);
+
+  const handleToggleStyleChip = useCallback((chip: typeof STYLE_CHIPS[number]) => {
+    setText((prev) => {
+      let updated = prev;
+      for (const c of STYLE_CHIPS) {
+        for (const kw of c.keywords) {
+          const regex = new RegExp(`\\b${kw}\\b|\\s*\\[style:\\s*${c.id}\\]`, "gi");
+          updated = updated.replace(regex, "");
+        }
+      }
+      updated = updated.replace(/\s+/g, " ").trim();
+      if (activeStyleChip === chip.id) {
+        return updated;
+      }
+      return updated ? `${updated} [style: ${chip.id}]` : `[style: ${chip.id}]`;
+    });
+    textareaRef.current?.focus();
+  }, [activeStyleChip]);
 
   const waitingMs = job.thinking && job.lastActivity ? now - job.lastActivity : 0;
   const lastModel = useMemo(() => {
@@ -625,6 +665,29 @@ export function ChatPanel({
 
       {/* Composer */}
       <div className="flex-none border-t border-[var(--color-border)] p-2">
+        {isWebsiteIntent && (
+          <div className="mb-2 flex items-center gap-1.5 overflow-x-auto pb-1 text-[11px]">
+            <span className="flex-none text-[10px] font-medium text-[var(--color-muted)]">Style:</span>
+            {STYLE_CHIPS.map((chip) => {
+              const isActive = activeStyleChip === chip.id;
+              return (
+                <button
+                  key={chip.id}
+                  type="button"
+                  onClick={() => handleToggleStyleChip(chip)}
+                  className={`flex-none rounded-full px-2 py-0.5 text-[10px] font-medium transition-colors ${
+                    isActive
+                      ? "bg-[var(--color-accent)] text-white shadow-sm"
+                      : "border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-muted)] hover:border-[var(--color-accent)] hover:text-[var(--color-text)]"
+                  }`}
+                  title={`Apply ${chip.label} design tokens and CSS system`}
+                >
+                  {chip.label}
+                </button>
+              );
+            })}
+          </div>
+        )}
         <textarea
           ref={textareaRef}
           aria-label="Chat message input"

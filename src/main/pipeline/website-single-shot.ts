@@ -7,6 +7,7 @@ import { applyParsedFileTags, parseFileTags } from "../agent/file-tags";
 import { parseSuggestedFiles, type SuggestedFile } from "../agent/suggest";
 import type { AgentEvent } from "../agent/loop";
 import type { AgentState, ApprovalDecision } from "../agent/tools";
+import { findTool } from "../agent/tools";
 import { verifyWebsite, type VerifyIssue, type VerifyReport } from "../quality/verifier";
 import { currentTelemetry } from "../telemetry";
 import { getSettings } from "../store";
@@ -16,6 +17,13 @@ import {
   checkReferenceClosure,
   inlineOrStubMissingAssetsLocally,
 } from "../website/reference-closure";
+import {
+  applyStylePackToExistingHtml,
+  detectStylePack,
+  formatStylePackPromptInstruction,
+  getStylePack,
+  type StylePack,
+} from "../website/style-packs";
 
 // PHASE 2B: Merged single-shot Website pipeline (Brief -> Build all files in 1 call -> Local Verify -> up to 2 targeted snippet repairs).
 
@@ -32,15 +40,19 @@ export interface SingleShotWebsiteOptions {
   onAgentOutput?: (chunk: string) => void;
   onSuggestedFiles?: (files: SuggestedFile[]) => void;
   pinnedLaneId?: string;
+  stylePackId?: string;
 }
 
-export function buildSingleShotSystemPrompt(manifest: SiteManifest): string {
+export function buildSingleShotSystemPrompt(manifest: SiteManifest, pack?: StylePack): string {
   const manifestInstruction = formatManifestPromptInstruction(manifest);
+  const styleInstruction = pack ? formatStylePackPromptInstruction(pack) : "";
   return [
     "You are Nova IDE's single-shot frontend architect.",
     "Emit complete website files in a SINGLE response using <file path=\"...\">...</file> blocks.",
     "",
     manifestInstruction,
+    "",
+    styleInstruction,
     "",
     "Quality & Accessibility Rules (enforced by local verifier):",
     "- Exactly ONE <h1> in the hero; use <h2> inside every <section> (never skip heading levels).",
@@ -51,7 +63,7 @@ export function buildSingleShotSystemPrompt(manifest: SiteManifest): string {
     "- Every local href/src referenced in HTML MUST exist in the site manifest or be emitted.",
     "- Do NOT wrap <file> contents in markdown ``` fences.",
     "- Valid HTML structure: exactly one <!DOCTYPE html>, one <html>, and one <body> tag.",
-  ].join("\n");
+  ].filter(Boolean).join("\n");
 }
 
 const SINGLE_SHOT_SYSTEM_PROMPT = buildSingleShotSystemPrompt({
@@ -248,8 +260,65 @@ export async function runSingleShotWebsite(
   opts: SingleShotWebsiteOptions,
 ): Promise<string> {
   state.runId = opts.runId;
+  const pack = opts.stylePackId
+    ? getStylePack(opts.stylePackId)
+    : detectStylePack(opts.brief, getSettings().defaultStyle);
+
+  opts.onEvent({
+    type: "assistant",
+    text: `Applied design system: **${pack.name}** (${pack.description})`,
+  });
+
+  // For "make the current website better / apply theme X" requests:
+  // do NOT regenerate from scratch. Read the existing files, apply the pack by editing:
+  // replace CSS variables and component styles, keep content and structure, show diff!
+  const indexAbs = path.join(state.workspaceRoot, "index.html");
+  const isExistingSite = fs.existsSync(indexAbs) && fs.statSync(indexAbs).size > 150;
+  const isRestyleRequest =
+    isExistingSite &&
+    /\b(?:make (?:the |this |current )?website better|improve (?:the |this )?(?:design|site)|apply (?:theme|style|neo|glass|editorial|neon|pastel|corporate|y2k)|restyle|redesign)\b/i.test(
+      opts.brief,
+    );
+
+  if (isRestyleRequest) {
+    const existingHtml = fs.readFileSync(indexAbs, "utf8");
+    const updatedHtml = applyStylePackToExistingHtml(existingHtml, pack);
+    const writeTool = findTool("writeFile");
+    if (writeTool) {
+      await writeTool.run(
+        { path: "index.html", content: updatedHtml },
+        {
+          state,
+          requestApproval: opts.requestApproval,
+          onPreview: opts.onPreview,
+          onAgentOutput: opts.onAgentOutput,
+          signal: opts.signal,
+          abortSignal: opts.abortController.signal,
+        },
+      );
+      opts.onEvent({
+        type: "tool",
+        name: "writeFile",
+        args: { path: "index.html" },
+        ok: true,
+        output: `Applied ${pack.name} design system while preserving existing content.`,
+        summaryLabel: `Restyling index.html with ${pack.name}`,
+      });
+    }
+
+    const report = await verifyWebsite({
+      pagePath: indexAbs,
+      workspaceRoot: state.workspaceRoot,
+      outDir: path.join(state.myideDir, "verify"),
+    });
+    state.lastVerify = report;
+    const summary = `Restyled existing website with ${pack.name} design system (preserved content and structure).`;
+    opts.onEvent({ type: "done", summary });
+    return summary;
+  }
+
   const manifest = resolveSiteManifest({ brief: opts.brief });
-  const systemPrompt = buildSingleShotSystemPrompt(manifest);
+  const systemPrompt = buildSingleShotSystemPrompt(manifest, pack);
 
   const buildMessages: Message[] = [
     { role: "system", content: systemPrompt },
@@ -388,7 +457,6 @@ export async function runSingleShotWebsite(
   }
 
   // Run local verifier on index.html
-  const indexAbs = path.join(state.workspaceRoot, "index.html");
   let report = await verifyWebsite({
     pagePath: indexAbs,
     workspaceRoot: state.workspaceRoot,

@@ -807,6 +807,26 @@ export function SettingsPanel({ settings, onChange, onClose, onOpenModels }: Pro
                         />
                       </label>
                     </div>
+
+                    <label className="mt-2 flex flex-col gap-1 text-[11px] text-[var(--nova-text-secondary)]">
+                      <span className="font-medium text-[var(--nova-text-primary)]">Default website style pack</span>
+                      <select
+                        value={s.defaultStyle ?? "minimal-editorial"}
+                        onChange={(e) => onChange({ defaultStyle: e.target.value })}
+                        className="w-full rounded border border-[var(--nova-border)] bg-[var(--nova-bg-app)] px-2 py-1.5 text-xs text-[var(--nova-text-primary)]"
+                      >
+                        <option value="neo-brutalism">Neo-Brutalism (Bold 3px borders, hard shadows, high contrast, vibrant accents)</option>
+                        <option value="glassmorphism">Glassmorphism (Frosted glass blur, vivid gradient mesh, translucent cards)</option>
+                        <option value="minimal-editorial">Minimal Editorial (Serif headings, warm off-white, restrained elegant type)</option>
+                        <option value="dark-neon-tech">Dark Neon Tech (Deep #0a0b0e canvas, cyan/purple glow, tech grid lines)</option>
+                        <option value="soft-pastel-playful">Soft Pastel Playful (Warm pastels, pill badges, friendly bouncy curves)</option>
+                        <option value="corporate-clean">Corporate Clean (Slate &amp; electric blue, subtle shadows, professional SaaS)</option>
+                        <option value="retro-y2k">Retro Y2K (Early-2000s web aesthetic, chrome/candy gradients, nostalgic bevels)</option>
+                      </select>
+                      <span className="text-[10px] text-[var(--nova-text-muted)]">
+                        Injected automatically into the prompt when no explicit style is specified by the user.
+                      </span>
+                    </label>
                   </div>
                 </div>
               </div>
