@@ -239,6 +239,20 @@ See [docs/PERF.md](docs/PERF.md) for the detailed benchmark breakdown and tuning
 
 ---
 
+## Production Website Builder Engine
+
+Nova IDE includes a production-grade website generation engine specifically engineered to produce complete, visually stunning sites on free-tier models:
+
+- **Complete File Sets**: Manifest analysis defaults to a self-contained single `index.html` on free tier to eliminate missing local assets; a reference-closure checker verifies every HTML/CSS link, automatically inlining or generating local stubs.
+- **7 Production Style Packs**: Concrete design tokens, CSS variables, typography pairings, and layout starters for `neo-brutalism`, `glassmorphism`, `minimal-editorial`, `dark-neon-tech`, `soft-pastel-playful`, `corporate-clean`, and `retro-y2k`.
+- **Non-Destructive Restyling**: Prompts like "apply neo-brutalism" or "make it darker" update only `<style id="nova-style-pack">` design tokens without destroying existing sections, copy, or scripts.
+- **Capability-Aware Lanes & "Wait for Best Lane"**: Low-completion lanes (e.g. Groq 5,500 token limit) are automatically routed to a 4-stage builder; if the top lane hits a short 429 cooldown, the router waits with a live countdown rather than drifting models.
+- **4-Stage Builder for Small Lanes**: Decomposes builds into `design-system` (`css/style.css`) → `skeleton` (`index.html`) → `sections` (spliced 2-3 at a time) → `behavior` (`js/main.js`), with auto-continuation if output is truncated.
+- **Headless Visual Review**: Local heuristics detect horizontal overflow, WCAG AA contrast ($< 4.5:1$), empty elements, and unstyled fallback fonts; models with vision capabilities score visual quality (1-10) and trigger targeted repairs.
+- **Stateful Intent Router**: Follow-up commands ("continue", "resume", "fix it") seamlessly resume active pipelines without triggering clarification chips; structured engineering prompt pastes ($> 1,500$ chars) automatically route to the IDE agent.
+
+---
+
 ## Status
 
 MyIDE is under active development against the

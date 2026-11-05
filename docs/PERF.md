@@ -185,6 +185,56 @@ When running on tight free-tier providers (Gemini 15 RPM / 1,500 RPD, Groq 30 RP
 
 ---
 
+## Website Builder Engine Upgrade (Phases 1 - 6)
+
+### Phase 1: Complete File Set & Integrity
+- **Manifest Step**: Resolves target file set prior to generation. Defaults to a single self-contained `index.html` on free tier (inline `<style>`, `<script>`, and vector SVGs) to avoid 404s.
+- **Reference-Closure Checker**: Extracts all local HTML `href`, `src`, and CSS `url()` references and ensures every local file exists or is automatically stubbed/inlined locally.
+- **Duplicate Document Validator**: Enforces strict document structure (rejects and sanitizes duplicate `<!DOCTYPE html>`, `<html>`, or `<body>` blocks caused by accidental concatenation).
+- **Line Diff Fix**: Preserves baseline pre-run snapshots so rewritten files report realistic additions and deletions (e.g. `+240/-210`) rather than `+N/-0`.
+
+### Phase 2: Capability-Aware Routing & "Wait for Best Lane"
+- **Lane Capability Metadata**: Added `maxOutputTokens`, `contextWindow`, `supportsVision`, `isReasoning`, and `roleTags` to all lanes.
+- **Filtering**: Filters out lanes whose `maxOutputTokens < minCodegenOutput` (e.g. Groq 5,500 token completion limit) from single-shot codegen.
+- **Lane Pinning**: Pins the model used for the initial file generation across all subsequent repair and verification rounds to eliminate style and architecture drift.
+- **Wait for Best Lane**: When preferred lane hits a 429 quota with a short cooldown ($\le 20$s wait budget), the IDE waits with live countdown events instead of degrading to weaker models.
+- **Reasoning Budget**: Automatically reserves 30% thinking overhead for reasoning models (e.g. `groq/gpt-oss-120b`).
+
+### Phase 3: Concrete Style Packs & Non-Destructive Restyle
+- **7 Production Style Packs**:
+  1. `neo-brutalism`: 3px solid black borders, hard 5px 5px 0px offset shadows, vibrant flat fills, Space Grotesk / JetBrains Mono typography.
+  2. `glassmorphism`: Frosted translucent panels (`backdrop-filter: blur(16px)`), vivid radial gradient mesh, glowing border accents.
+  3. `minimal-editorial`: Refined serif typography (Playfair Display), generous whitespace, hairline borders, quiet luxury layout.
+  4. `dark-neon-tech`: Deep `#090A0F` canvas, neon cyan and purple glows, tech grid lines.
+  5. `soft-pastel-playful`: Creamy warm pastels, pill badges, bouncy curves, cheerful modern aesthetic.
+  6. `corporate-clean`: Slate backgrounds, royal blue primary accents, structured SaaS component grids.
+  7. `retro-y2k`: Early-2000s nostalgic web aesthetic, candy gradients, bevels, vintage web elements.
+- **Non-Destructive Restyle**: Edits existing `index.html` by upgrading design tokens and CSS variables in `<style id="nova-style-pack">` without touching existing content, markup, or scripts.
+- **UI Style Selector**: Quick-select style chip row in `ChatPanel` and default style pack dropdown in `SettingsPanel`.
+
+### Phase 4: Staged Build for Small-Output Lanes
+- Automatically activates when the pinned lane has `maxOutputTokens < 16,000` (e.g. Groq 5,500).
+- Splits generation into 4 focused sub-4,000-token stages:
+  1. `design-system` -> `css/style.css`
+  2. `skeleton` -> `index.html` with section comment placeholders
+  3. `sections` -> Real markup spliced into each placeholder (2-3 sections per call)
+  4. `behavior` -> `js/main.js` interactive event listeners
+- Auto-continuation: Detects unclosed `<file>` tags and prompts the model to resume exactly where it stopped.
+
+### Phase 5: Headless Screenshot Review with Vision Model
+- **Local Heuristics**: Evaluates horizontal overflow (`scrollWidth > innerWidth`), WCAG AA text contrast ($< 4.5:1$), empty tags, and unstyled default fonts without requiring network or cloud tokens.
+- **Vision Model Evaluation**: Passes desktop (1280px) and mobile (390px) previews to vision models (e.g. Gemini 2.5 Flash) for structured JSON scoring (1-10). Scores $< 7$ automatically trigger a targeted visual repair round.
+- **Preview Review Card**: Renders Desktop and Mobile preview thumbnails, check badges (`Structure ✓ | Assets ✓ | Visual 8/10`), and an itemized visual findings list in chat.
+
+### Phase 6: Stateful Intent Router & Paste Protection
+- **Follow-Up Resumes**: Short commands like `"continue"`, `"resume"`, `"go on"`, `"retry"` resume the active pipeline without re-triggering clarification chips.
+- **Targeted Fixes**: `"fix it"` or `"why did it fail"` automatically feeds pending verification issues into the fix turn.
+- **Incremental Restyle**: Commands like `"make it darker"` or `"apply glassmorphism"` route directly to non-destructive website restyle instead of rebuilding from scratch.
+- **Engineering Prompt Paste Protection**: Long pasted prompts ($> 1,500$ chars) containing structured engineering tokens (`GOAL`, `PHASE`, `ROOT CAUSE`, `TypeScript`, `Electron`, `IPC`) route directly to the codebase `agent`, preventing false-positive website routing.
+
+
+---
+
 ## Phase 6 — Local Model Adapter (`src/main/ai/local-providers.ts`, `SettingsPanel.tsx`)
 
 **Changes:**
@@ -274,3 +324,53 @@ When running on tight free-tier providers (Gemini 15 RPM / 1,500 RPD, Groq 30 RP
 ### 5. Conserving Cloud Quota with Local Ollama / LM Studio
 - Open **Settings > Local Models**, start Ollama or LM Studio, and click **Detect Servers**.
 - The IDE will route `classify`, `summarize`, `chat`, and simple edits to your local GPU/CPU for **0 cloud tokens**, reserving scarce Gemini/Groq daily quotas for hard multi-file codegen and repair tasks.
+
+---
+
+## Website Builder Engine Upgrade (Phases 1 - 6)
+
+### Phase 1: Complete File Set & Integrity
+- **Manifest Step**: Resolves target file set prior to generation. Defaults to a single self-contained `index.html` on free tier (inline `<style>`, `<script>`, and vector SVGs) to avoid 404s.
+- **Reference-Closure Checker**: Extracts all local HTML `href`, `src`, and CSS `url()` references and ensures every local file exists or is automatically stubbed/inlined locally.
+- **Duplicate Document Validator**: Enforces strict document structure (rejects and sanitizes duplicate `<!DOCTYPE html>`, `<html>`, or `<body>` blocks caused by accidental concatenation).
+- **Line Diff Fix**: Preserves baseline pre-run snapshots so rewritten files report realistic additions and deletions (e.g. `+240/-210`) rather than `+N/-0`.
+
+### Phase 2: Capability-Aware Routing & "Wait for Best Lane"
+- **Lane Capability Metadata**: Added `maxOutputTokens`, `contextWindow`, `supportsVision`, `isReasoning`, and `roleTags` to all lanes.
+- **Filtering**: Filters out lanes whose `maxOutputTokens < minCodegenOutput` (e.g. Groq 5,500 token completion limit) from single-shot codegen.
+- **Lane Pinning**: Pins the model used for the initial file generation across all subsequent repair and verification rounds to eliminate style and architecture drift.
+- **Wait for Best Lane**: When preferred lane hits a 429 quota with a short cooldown ($\le 20$s wait budget), the IDE waits with live countdown events instead of degrading to weaker models.
+- **Reasoning Budget**: Automatically reserves 30% thinking overhead for reasoning models (e.g. `groq/gpt-oss-120b`).
+
+### Phase 3: Concrete Style Packs & Non-Destructive Restyle
+- **7 Production Style Packs**:
+  1. `neo-brutalism`: 3px solid black borders, hard 5px 5px 0px offset shadows, vibrant flat fills, Space Grotesk / JetBrains Mono typography.
+  2. `glassmorphism`: Frosted translucent panels (`backdrop-filter: blur(16px)`), vivid radial gradient mesh, glowing border accents.
+  3. `minimal-editorial`: Refined serif typography (Playfair Display), generous whitespace, hairline borders, quiet luxury layout.
+  4. `dark-neon-tech`: Deep `#090A0F` canvas, neon cyan and purple glows, tech grid lines.
+  5. `soft-pastel-playful`: Creamy warm pastels, pill badges, bouncy curves, cheerful modern aesthetic.
+  6. `corporate-clean`: Slate backgrounds, royal blue primary accents, structured SaaS component grids.
+  7. `retro-y2k`: Early-2000s nostalgic web aesthetic, candy gradients, bevels, vintage web elements.
+- **Non-Destructive Restyle**: Edits existing `index.html` by upgrading design tokens and CSS variables in `<style id="nova-style-pack">` without touching existing content, markup, or scripts.
+- **UI Style Selector**: Quick-select style chip row in `ChatPanel` and default style pack dropdown in `SettingsPanel`.
+
+### Phase 4: Staged Build for Small-Output Lanes
+- Automatically activates when the pinned lane has `maxOutputTokens < 16,000` (e.g. Groq 5,500).
+- Splits generation into 4 focused sub-4,000-token stages:
+  1. `design-system` -> `css/style.css`
+  2. `skeleton` -> `index.html` with section comment placeholders
+  3. `sections` -> Real markup spliced into each placeholder (2-3 sections per call)
+  4. `behavior` -> `js/main.js` interactive event listeners
+- Auto-continuation: Detects unclosed `<file>` tags and prompts the model to resume exactly where it stopped.
+
+### Phase 5: Headless Screenshot Review with Vision Model
+- **Local Heuristics**: Evaluates horizontal overflow (`scrollWidth > innerWidth`), WCAG AA text contrast ($< 4.5:1$), empty tags, and unstyled default fonts without requiring network or cloud tokens.
+- **Vision Model Evaluation**: Passes desktop (1280px) and mobile (390px) previews to vision models (e.g. Gemini 2.5 Flash) for structured JSON scoring (1-10). Scores $< 7$ automatically trigger a targeted visual repair round.
+- **Preview Review Card**: Renders Desktop and Mobile preview thumbnails, check badges (`Structure ✓ | Assets ✓ | Visual 8/10`), and an itemized visual findings list in chat.
+
+### Phase 6: Stateful Intent Router & Paste Protection
+- **Follow-Up Resumes**: Short commands like `"continue"`, `"resume"`, `"go on"`, `"retry"` resume the active pipeline without re-triggering clarification chips.
+- **Targeted Fixes**: `"fix it"` or `"why did it fail"` automatically feeds pending verification issues into the fix turn.
+- **Incremental Restyle**: Commands like `"make it darker"` or `"apply glassmorphism"` route directly to non-destructive website restyle instead of rebuilding from scratch.
+- **Engineering Prompt Paste Protection**: Long pasted prompts ($> 1,500$ chars) containing structured engineering tokens (`GOAL`, `PHASE`, `ROOT CAUSE`, `TypeScript`, `Electron`, `IPC`) route directly to the codebase `agent`, preventing false-positive website routing.
+

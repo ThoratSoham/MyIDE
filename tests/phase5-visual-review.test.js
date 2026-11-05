@@ -136,3 +136,4 @@ test("Phase 5: Vision model scores visual layout and surfaces targeted design is
 
   fs.rmSync(tmpDir, { recursive: true, force: true });
 });
+
