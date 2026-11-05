@@ -53,6 +53,12 @@ const api: ElectronApi = {
     test: (provider: LocalProviderId, model?: string) =>
       ipcRenderer.invoke("localModels:test", provider, model),
   },
+  checkpoints: {
+    diff: (runId: string, relPath: string) => ipcRenderer.invoke("checkpoints:diff", runId, relPath),
+    revertFile: (runId: string, relPath: string) =>
+      ipcRenderer.invoke("checkpoints:revertFile", runId, relPath),
+    undoRun: (runId: string) => ipcRenderer.invoke("checkpoints:undoRun", runId),
+  },
   sessions: {
     list: () => ipcRenderer.invoke("sessions:list"),
     switch: (sessionId: string) => ipcRenderer.invoke("sessions:switch", sessionId),

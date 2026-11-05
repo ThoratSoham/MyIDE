@@ -27,6 +27,11 @@ import {
   createDir,
 } from "./fs-workspace";
 import {
+  getRunFileDiff,
+  revertFileFromRun,
+  undoEntireRun,
+} from "./agent/checkpoints";
+import {
   getProviderKey,
   keyLast4,
   publicSettings,
@@ -151,6 +156,23 @@ const api: MainApi = {
   localModelsGet: () => ai.localModelsState(),
   localModelsDetect: () => ai.detectLocalModels(),
   localModelsTest: (provider, model) => ai.testLocalModel(provider, model),
+
+  checkpointsDiff: (runId: string, relPath: string) =>
+    getRunFileDiff(workspaceRootPath(), runId, relPath),
+  checkpointsRevertFile: (runId: string, relPath: string) => {
+    const res = revertFileFromRun(workspaceRootPath(), runId, relPath, deleteToTrash);
+    if (res.ok) {
+      send(WORKSPACE_CHANGED_CHANNEL, { path: relPath, kind: "file" });
+    }
+    return res;
+  },
+  checkpointsUndoRun: (runId: string) => {
+    const res = undoEntireRun(workspaceRootPath(), runId, deleteToTrash);
+    if (res.ok) {
+      send(WORKSPACE_CHANGED_CHANNEL, { path: workspaceRootPath(), kind: "root" });
+    }
+    return res;
+  },
 
   sessionsList: () => jobs?.listSessions() ?? { sessions: [], activeSessionId: "" },
   sessionsSwitch: (sessionId) => mustJobs().switchSession(sessionId),

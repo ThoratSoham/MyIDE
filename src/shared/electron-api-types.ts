@@ -174,8 +174,35 @@ export interface ChangedFile {
   path: string;
   change: "created" | "edited" | "deleted";
   bytes: number;
+  runId?: string;
   addedLines?: number;
   removedLines?: number;
+}
+
+export interface RunFileDiffView {
+  path: string;
+  runId: string;
+  before: string;
+  after: string;
+  addedLines: number;
+  removedLines: number;
+  isNew: boolean;
+  isDeleted: boolean;
+}
+
+export interface RevertFileResult {
+  ok: boolean;
+  path: string;
+  action: "restored" | "deleted_to_trash" | "unchanged";
+  message: string;
+}
+
+export interface UndoRunResult {
+  ok: boolean;
+  runId: string;
+  revertedFiles: string[];
+  trashedFiles: string[];
+  message: string;
 }
 
 export interface RunStats {
@@ -512,6 +539,11 @@ export interface ElectronApi {
     get: () => Promise<LocalModelsState>;
     detect: () => Promise<LocalModelsState>;
     test: (provider: LocalProviderId, model?: string) => Promise<LocalModelTestResult>;
+  };
+  checkpoints: {
+    diff: (runId: string, relPath: string) => Promise<RunFileDiffView>;
+    revertFile: (runId: string, relPath: string) => Promise<RevertFileResult>;
+    undoRun: (runId: string) => Promise<UndoRunResult>;
   };
   sessions: {
     list: () => Promise<{ sessions: ChatSessionMeta[]; activeSessionId: string }>;

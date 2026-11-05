@@ -13,6 +13,7 @@ import type {
 import { estimateRun, INTENT_LABELS, INTENT_OPTIONS, routeIntent } from "../../shared/intent";
 import { Markdown } from "./Markdown";
 import { PopupQuestionHistoryCard, PopupQuestionModal } from "./PopupQuestionCard";
+import { useWorkspaceStore } from "../stores/workspaceStore";
 
 // PART 2 + PART 3: Docked right-side Chat panel with:
 // - Full scrollable conversation history with timestamps
@@ -951,19 +952,101 @@ function RunStatsLine({ stats }: { stats: RunStats }) {
 }
 
 function FilesCard({ files }: { files: NonNullable<ChatMessage["files"]> }) {
+  const { openDiff, openFile } = useWorkspaceStore();
+  const [reverting, setReverting] = useState<string | null>(null);
+  const [undoing, setUndoing] = useState(false);
+  const runId = files.find((f) => f.runId)?.runId;
+
+  const handleDiff = async (f: NonNullable<ChatMessage["files"]>[number]) => {
+    if (!f.runId) {
+      openFile(f.path);
+      return;
+    }
+    try {
+      const res = await window.electron.checkpoints.diff(f.runId, f.path);
+      openDiff(f.path, {
+        runId: f.runId,
+        original: res.before,
+        modified: res.after,
+      });
+    } catch {
+      openFile(f.path);
+    }
+  };
+
+  const handleRevert = async (f: NonNullable<ChatMessage["files"]>[number]) => {
+    if (!f.runId) return;
+    setReverting(f.path);
+    try {
+      await window.electron.checkpoints.revertFile(f.runId, f.path);
+    } finally {
+      setReverting(null);
+    }
+  };
+
+  const handleUndoRun = async () => {
+    if (!runId) return;
+    setUndoing(true);
+    try {
+      await window.electron.checkpoints.undoRun(runId);
+    } finally {
+      setUndoing(false);
+    }
+  };
+
   return (
     <div className="mt-1.5 rounded border border-[var(--color-border)] bg-[var(--color-base)] p-2">
-      <div className="mb-1 text-[10px] uppercase tracking-wide text-[var(--color-muted)]">Files changed</div>
-      <ul className="space-y-0.5">
-        {files.map((f) => (
-          <li key={f.path} className="flex items-center gap-2 text-[11px]">
-            <span className="w-14 shrink-0 text-[var(--color-muted)]">{f.change}</span>
-            <span className="min-w-0 flex-1 truncate font-mono text-[var(--color-text)]" title={f.path}>
-              {f.path}
-            </span>
-            <span className="shrink-0 text-[var(--color-muted)]">{f.bytes} B</span>
-          </li>
-        ))}
+      <div className="mb-1 flex items-center justify-between">
+        <span className="text-[10px] uppercase tracking-wide text-[var(--color-muted)]">Files changed</span>
+        {runId && (
+          <button
+            type="button"
+            onClick={() => void handleUndoRun()}
+            disabled={undoing}
+            className="rounded border border-[var(--color-negative)]/50 bg-[var(--color-negative)]/10 px-2 py-0.5 text-[10px] text-[var(--color-negative)] hover:bg-[var(--color-negative)]/20 disabled:opacity-40"
+          >
+            {undoing ? "Undoing…" : "Undo this run"}
+          </button>
+        )}
+      </div>
+      <ul className="space-y-1">
+        {files.map((f) => {
+          const hasDiff = typeof f.addedLines === "number" || typeof f.removedLines === "number";
+          return (
+            <li key={f.path} className="flex items-center gap-1.5 text-[11px]">
+              <span className="w-12 shrink-0 text-[10px] text-[var(--color-muted)]">{f.change}</span>
+              <span className="min-w-0 flex-1 truncate font-mono text-[var(--color-text)]" title={f.path}>
+                {f.path}
+              </span>
+              {hasDiff && (
+                <span className="shrink-0 font-mono text-[10px]">
+                  <span className="text-[var(--color-positive)]">+{f.addedLines ?? 0}</span>
+                  <span className="text-[var(--color-muted)]">/</span>
+                  <span className="text-[var(--color-negative)]">-{f.removedLines ?? 0}</span>
+                </span>
+              )}
+              {f.runId && (
+                <div className="flex shrink-0 items-center gap-1">
+                  <button
+                    type="button"
+                    onClick={() => void handleDiff(f)}
+                    className="rounded border border-[var(--color-border)] bg-[var(--color-surface)] px-1.5 py-0.5 text-[10px] text-[var(--color-text)] hover:bg-[var(--color-surface-alt)]"
+                  >
+                    Diff
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => void handleRevert(f)}
+                    disabled={reverting === f.path}
+                    className="rounded border border-[var(--color-negative)]/40 px-1.5 py-0.5 text-[10px] text-[var(--color-negative)] hover:bg-[var(--color-negative)]/10 disabled:opacity-40"
+                  >
+                    {reverting === f.path ? "…" : "Revert"}
+                  </button>
+                </div>
+              )}
+            </li>
+          );
+        })}
       </ul>
     </div>
   );

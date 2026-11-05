@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
-import Editor, { OnChange, OnMount } from "@monaco-editor/react";
-import { ChevronRight, Command, FileCode2, FolderOpen, Save, Search, X } from "lucide-react";
+import Editor, { DiffEditor, OnChange, OnMount } from "@monaco-editor/react";
+import { ChevronRight, Command, FileCode2, FolderOpen, GitCompare, RotateCcw, Save, Search, X } from "lucide-react";
 import { NovaLogoMark } from "../branding/NovaBrand";
 import { Kbd } from "../design-system/primitives";
 import { useLayoutStore } from "../stores/layoutStore";
@@ -15,6 +15,9 @@ interface Tab {
   label: string;
   saved: boolean;
   content: string;
+  diffMode?: boolean;
+  originalContent?: string;
+  diffRunId?: string;
 }
 
 interface Props {
@@ -142,6 +145,27 @@ export function EditorArea({ openTarget, workspaceKey, theme, onOpenFolder }: Pr
     let alive = true;
 
     const run = async () => {
+      if (openTarget.diff) {
+        const { runId, original, modified } = openTarget.diff;
+        setTabs((prev) => {
+          const filtered = prev.filter((t) => t.path !== target);
+          return [
+            ...filtered,
+            {
+              path: target,
+              label: `${baseName(target)} (Diff)`,
+              saved: true,
+              content: modified,
+              diffMode: true,
+              originalContent: original,
+              diffRunId: runId,
+            },
+          ];
+        });
+        setActivePath(target);
+        return;
+      }
+
       if (tabsRef.current.some((t) => t.path === target)) {
         pendingLineRef.current = line;
         setActivePath(target);
@@ -298,11 +322,25 @@ export function EditorArea({ openTarget, workspaceKey, theme, onOpenFolder }: Pr
               ))}
             </div>
             <div className="ml-auto flex shrink-0 items-center gap-2">
+              {active?.diffMode && active?.diffRunId && (
+                <button
+                  type="button"
+                  onClick={async () => {
+                    if (!active?.diffRunId) return;
+                    await window.electron.checkpoints.revertFile(active.diffRunId, active.path);
+                    closeTab(active.path);
+                  }}
+                  className="flex items-center gap-1 rounded border border-[var(--nova-danger)]/50 bg-[var(--nova-danger-soft)] px-2 py-0.5 text-[10.5px] text-[var(--nova-danger)] hover:opacity-90"
+                >
+                  <RotateCcw size={11} />
+                  <span>Revert File</span>
+                </button>
+              )}
               <span className="font-mono text-[10.5px] uppercase opacity-75">{lang}</span>
               <button
                 type="button"
                 onClick={() => active && void save(active.path)}
-                disabled={!active || active.saved}
+                disabled={!active || active.saved || Boolean(active.diffMode)}
                 className="flex items-center gap-1 rounded border border-[var(--nova-border)] bg-[var(--nova-bg-panel)] px-2 py-0.5 text-[10.5px] text-[var(--nova-text-secondary)] hover:bg-[var(--nova-bg-hover)] disabled:opacity-35"
               >
                 <Save size={11} />
@@ -315,30 +353,48 @@ export function EditorArea({ openTarget, workspaceKey, theme, onOpenFolder }: Pr
 
       <div className="min-h-0 flex-1 overflow-hidden bg-[var(--nova-bg-editor)]">
         {active ? (
-          <Editor
-            height="100%"
-            language={lang}
-            path={active.path}
-            value={active.content}
-            onChange={onChange}
-            onMount={onEditorMount}
-            theme={theme === "dark" ? "vs-dark" : "vs"}
-            options={{
-              minimap: { enabled: false },
-              lineNumbers: "on",
-              roundedSelection: true,
-              scrollBeyondLastLine: false,
-              automaticLayout: true,
-              fontFamily: "var(--nova-font-mono)",
-              fontSize: 13.5,
-              tabSize: 2,
-              wordWrap: "off",
-              padding: { top: 10 },
-              renderWhitespace: "selection",
-              smoothScrolling: true,
-              cursorBlinking: "smooth",
-            }}
-          />
+          active.diffMode ? (
+            <DiffEditor
+              height="100%"
+              language={lang}
+              original={active.originalContent ?? ""}
+              modified={active.content}
+              theme={theme === "dark" ? "vs-dark" : "vs"}
+              options={{
+                readOnly: true,
+                renderSideBySide: true,
+                minimap: { enabled: false },
+                automaticLayout: true,
+                fontFamily: "var(--nova-font-mono)",
+                fontSize: 13,
+              }}
+            />
+          ) : (
+            <Editor
+              height="100%"
+              language={lang}
+              path={active.path}
+              value={active.content}
+              onChange={onChange}
+              onMount={onEditorMount}
+              theme={theme === "dark" ? "vs-dark" : "vs"}
+              options={{
+                minimap: { enabled: false },
+                lineNumbers: "on",
+                roundedSelection: true,
+                scrollBeyondLastLine: false,
+                automaticLayout: true,
+                fontFamily: "var(--nova-font-mono)",
+                fontSize: 13.5,
+                tabSize: 2,
+                wordWrap: "off",
+                padding: { top: 10 },
+                renderWhitespace: "selection",
+                smoothScrolling: true,
+                cursorBlinking: "smooth",
+              }}
+            />
+          )
         ) : (
           <div className="flex h-full items-center justify-center p-6 text-[var(--nova-text-muted)]">
             <div className="w-full max-w-md space-y-5 text-center">

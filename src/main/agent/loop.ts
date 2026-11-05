@@ -345,6 +345,7 @@ export async function runAgent(ai: AIService, state: AgentState, opts: AgentOpti
   const allowTools = opts.allowTools !== false;
   const tokenBudget = opts.tokenBudget ?? DEFAULT_TOKEN_BUDGET;
   const runId = opts.runId ?? new Date().toISOString().replace(/[:.]/g, "-");
+  state.runId = runId;
   const startedAt = Date.now();
   const abortController = opts.abortController ?? new AbortController();
 

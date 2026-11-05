@@ -4,6 +4,11 @@ export interface OpenFileTarget {
   path: string;
   line?: number;
   nonce: number;
+  diff?: {
+    runId: string;
+    original: string;
+    modified: string;
+  };
 }
 
 interface WorkspaceStore {
@@ -18,6 +23,7 @@ interface WorkspaceStore {
   setRoot: (root: string) => void;
   bumpWorkspace: () => void;
   openFile: (path: string, line?: number) => void;
+  openDiff: (path: string, diff: { runId: string; original: string; modified: string }) => void;
   openPreview: (path: string) => void;
   closePreview: () => void;
   refreshFiles: () => Promise<void>;
@@ -41,6 +47,10 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
 
   openFile: (path, line) => {
     set({ openTarget: { path, line, nonce: Date.now() } });
+  },
+
+  openDiff: (path, diff) => {
+    set({ openTarget: { path, diff, nonce: Date.now() } });
   },
 
   openPreview: (path) => set({ previewPath: path }),

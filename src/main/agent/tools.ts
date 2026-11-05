@@ -5,6 +5,7 @@ import log from "electron-log";
 import { verifyWebsite, type VerifyReport } from "../quality/verifier";
 import { getSettings } from "../store";
 import { currentTelemetry } from "../telemetry";
+import { snapshotFileForRun } from "./checkpoints";
 import type { UserQuestionOption } from "../../shared/electron-api-types";
 import {
   applyMultiEditsAtomically,
@@ -46,6 +47,7 @@ export interface AgentState {
   verifyPassedSinceChange: boolean;
   lastVerify: VerifyReport | null;
   plan: PlanStep[];
+  runId?: string;
 }
 
 export function verifyWrittenFile(abs: string): string | null {
@@ -138,7 +140,14 @@ export function clip(s: string, limit = TEXT_LIMIT): string {
   return `${s.slice(0, headLen)}\n... [${omitted} characters truncated] ...\n${s.slice(s.length - tailLen)}`;
 }
 
-function backupIfExists(root: string, abs: string, rel: string): void {
+function backupIfExists(root: string, abs: string, rel: string, runId?: string): void {
+  if (runId) {
+    try {
+      snapshotFileForRun(root, runId, rel);
+    } catch {
+      /* ignore */
+    }
+  }
   if (!fs.existsSync(abs) || !fs.statSync(abs).isFile()) return;
   const backupRoot = path.join(root, ".myide", "backups");
   fs.mkdirSync(backupRoot, { recursive: true });
@@ -506,7 +515,7 @@ export const TOOLS: ToolSpec[] = [
       const abs = insideWorkspace(ctx.state.workspaceRoot, rel);
       if (isEnvFile(abs)) return { ok: false, output: "Refused: .env files are never written (FR-5.3)." };
       const existed = fs.existsSync(abs);
-      backupIfExists(ctx.state.workspaceRoot, abs, rel);
+      backupIfExists(ctx.state.workspaceRoot, abs, rel, ctx.state.runId);
       fs.mkdirSync(path.dirname(abs), { recursive: true });
       fs.writeFileSync(abs, content, "utf8");
       const problem = verifyWrittenFile(abs);
@@ -551,7 +560,7 @@ export const TOOLS: ToolSpec[] = [
           currentTelemetry()?.recordFailedEditFile();
           return { ok: false, output: multiRes.error ?? `Multi-edit failed in ${rel}.` };
         }
-        backupIfExists(ctx.state.workspaceRoot, abs, rel);
+        backupIfExists(ctx.state.workspaceRoot, abs, rel, ctx.state.runId);
         fs.writeFileSync(abs, multiRes.updatedText, "utf8");
         const problem = verifyWrittenFile(abs);
         if (problem) return { ok: false, output: `The edit did NOT succeed: ${problem}` };
@@ -571,7 +580,7 @@ export const TOOLS: ToolSpec[] = [
         currentTelemetry()?.recordFailedEditFile();
         return { ok: false, output: res.error ?? `The text to replace was not found in ${rel}.` };
       }
-      backupIfExists(ctx.state.workspaceRoot, abs, rel);
+      backupIfExists(ctx.state.workspaceRoot, abs, rel, ctx.state.runId);
       fs.writeFileSync(abs, res.updatedText, "utf8");
       const problem = verifyWrittenFile(abs);
       if (problem) return { ok: false, output: `The edit did NOT succeed: ${problem}` };
@@ -628,7 +637,7 @@ export const TOOLS: ToolSpec[] = [
       ];
       const updatedText = updatedLines.join(eol) + (hadFinalNewline ? eol : "");
 
-      backupIfExists(ctx.state.workspaceRoot, abs, rel);
+      backupIfExists(ctx.state.workspaceRoot, abs, rel, ctx.state.runId);
       fs.writeFileSync(abs, updatedText, "utf8");
       const problem = verifyWrittenFile(abs);
       if (problem) return { ok: false, output: `replaceLines did NOT succeed: ${problem}` };
@@ -651,6 +660,7 @@ export const TOOLS: ToolSpec[] = [
       if (!fs.existsSync(abs)) return { ok: false, output: `Nothing to delete at ${rel}.` };
       const trashRoot = path.join(ctx.state.workspaceRoot, ".myide", "trash");
       fs.mkdirSync(trashRoot, { recursive: true });
+      backupIfExists(ctx.state.workspaceRoot, abs, rel, ctx.state.runId);
       const dest = path.join(trashRoot, `${Date.now()}_${rel.replace(/[\\/]/g, "_")}`);
       if (fs.statSync(abs).isDirectory()) {
         fs.cpSync(abs, dest, { recursive: true });

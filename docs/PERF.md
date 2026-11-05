@@ -139,3 +139,22 @@ This document records measured model calls, token budgets, tool executions, and 
 | :--- | ---: | ---: | ---: | ---: | ---: | ---: |
 | 5-task suite (cloud mock) | **8 (-75.8% vs P0)** | **10,558** | **1,921** | **12,479 (-72.3% vs P0)** | **15** | **0** |
 | Cloud calls when local coder active | **0–6 (up to -100% cloud RPD on utility/explain/simple edits)** | — | — | — | — | **0** |
+
+---
+
+## Phase 7 — Safety Net for Batching: Per-Run Checkpoints & Diff View (`checkpoints.ts`, `ChatPanel.tsx`, `EditorArea.tsx`)
+
+**Changes:**
+- **Per-run checkpoint manager (`src/main/agent/checkpoints.ts`)**: Before the first write, edit, or delete of any file within a run, stores its pre-run state in `.myide/backups/runs/<runId>/manifest.json` and preserves original content blobs.
+- **Line diff calculations & stats**: Automatically computes `+addedLines / -removedLines` per changed file (`ChangedFile`), displayed directly in the chat `FilesCard`.
+- **One-click "Undo this run" & per-file "Revert"**: Restores modified/deleted files back to their exact pre-run byte content and safely moves newly created files into `.myide/trash` (recoverable).
+- **Monaco Diff Viewer (`EditorArea.tsx`)**: Clicking **Diff** on any changed file opens a side-by-side Monaco DiffEditor showing original vs. modified code with an inline **Revert File** button.
+
+| Task | Model Calls | Input Tokens | Output Tokens | Total Tokens | Tool Calls | Failed Edits |
+| :--- | ---: | ---: | ---: | ---: | ---: | ---: |
+| 1. Create a small website | 1 (-80% vs P0) | 370 | 1,098 | 1,468 | 4 | 0 |
+| 2. Fix a TS error | 2 (-75% vs P0) | 2,743 | 127 | 2,870 | 2 | 0 |
+| 3. Add function + test | 2 (-67% vs P0) | 2,923 | 259 | 3,182 | 4 | 0 |
+| 4. Rename across files | 2 (-82% vs P0) | 3,259 | 352 | 3,611 | 5 | 0 |
+| 5. Explain a file | 1 (-67% vs P0) | 1,263 | 85 | 1,348 | 0 | 0 |
+| **TOTAL (5 tasks)** | **8 (-75.8% vs P0)** | **10,558** | **1,921** | **12,479 (-72.3% vs P0)** | **15** | **0** |

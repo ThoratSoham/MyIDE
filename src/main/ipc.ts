@@ -19,10 +19,13 @@ import type {
   ModelsStateView,
   ProviderKeyId,
   QuotaLaneView,
+  RevertFileResult,
+  RunFileDiffView,
   SearchMatch,
   StartInput,
   TerminalInfo,
   TerminalSpawnOptions,
+  UndoRunResult,
   UserQuestionRequest,
   UserQuestionResponse,
   WorkspaceInfo,
@@ -49,6 +52,11 @@ export interface MainApi {
   localModelsGet: () => LocalModelsState;
   localModelsDetect: () => Promise<LocalModelsState>;
   localModelsTest: (provider: LocalProviderId, model?: string) => Promise<LocalModelTestResult>;
+
+  // checkpoints (PHASE 7)
+  checkpointsDiff: (runId: string, relPath: string) => RunFileDiffView;
+  checkpointsRevertFile: (runId: string, relPath: string) => RevertFileResult;
+  checkpointsUndoRun: (runId: string) => UndoRunResult;
 
   // sessions (PART 2)
   sessionsList: () => { sessions: ChatSessionMeta[]; activeSessionId: string };
@@ -136,6 +144,11 @@ export function setupIpc(main: IpcMain, api: MainApi) {
   handle("localModels:test", (provider: LocalProviderId, model?: string) =>
     api.localModelsTest(provider, model),
   );
+  handle("checkpoints:diff", (runId: string, relPath: string) => api.checkpointsDiff(runId, relPath));
+  handle("checkpoints:revertFile", (runId: string, relPath: string) =>
+    api.checkpointsRevertFile(runId, relPath),
+  );
+  handle("checkpoints:undoRun", (runId: string) => api.checkpointsUndoRun(runId));
 
   // sessions
   handle("sessions:list", () => api.sessionsList());

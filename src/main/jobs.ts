@@ -28,6 +28,7 @@ import {
 import { routeIntent, estimateRun, CLARIFY_OPTIONS, INTENT_LABELS } from "../shared/intent";
 import { hop, newTraceId, note as traceNote } from "./trace";
 import { finishRunTelemetry, startRunTelemetry, withRunTelemetry } from "./telemetry";
+import { getRunFileDiff } from "./agent/checkpoints";
 import type {
   ChangedFile,
   ChatAction,
@@ -1017,7 +1018,16 @@ export class JobManager {
       } catch {
         bytes = 0;
       }
-      files.push({ path: rel, change, bytes });
+      let addedLines: number | undefined;
+      let removedLines: number | undefined;
+      try {
+        const diff = getRunFileDiff(state.workspaceRoot, job.id, rel);
+        addedLines = diff.addedLines;
+        removedLines = diff.removedLines;
+      } catch {
+        /* ignore */
+      }
+      files.push({ path: rel, change, bytes, runId: job.id, addedLines, removedLines });
     }
     job.files = files;
     this.pushMessage({ role: "notice", text: `Files changed (${files.length})`, files });
