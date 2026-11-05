@@ -205,6 +205,40 @@ workspace and is git-ignored.
 
 ---
 
+## Free-Tier Efficiency & Architecture Upgrades (Phase 0 – Phase 8)
+
+Nova IDE features an end-to-end efficiency layer designed specifically for low-RPM, low-TPM, and daily-capped free-tier model providers (Gemini free, Groq free, OpenRouter :free, and local Ollama/LM Studio):
+
+1. **Batched Actions in the Agent Loop**: The model can return multiple tool calls in a single turn via `actions: [{ tool, args }, ...]`, executing contiguous read-only actions in parallel and halting at the first failure or approval denial.
+2. **Single-Shot `<file>` Website Generation**: Emits responsive websites in a single model turn via `<file path="...">` blocks with unclosed EOF tolerance and targeted snippet-only repair loops.
+3. **4-Tier Fuzzy `editFile` Matching**: Cascades through exact match, trailing whitespace + CRLF/LF normalization, indentation-relative scale matching, and 90% sliding similarity before failing.
+4. **Context Optimization**:
+   - `repo-map`: Workspace symbol outlines and import graph cached by `mtime` in `.myide/cache/repo-map.json` (~1,200 token budget).
+   - `bm25`: Okapi BM25 retriever resolving `@file`, `@symbol`, and code identifiers into prompt context with zero model calls.
+   - `working-memory`: Distills evicted turns into `[Working Memory]` and stubs older tool results to prevent 413s.
+5. **Smart Router & Token-Bucket Ledger**:
+   - Proactive token bucket (`canAfford`) pre-skips RPM/TPM-full lanes without wasting HTTP calls.
+   - Malformed-JSON probation demotes lanes with >25% invalid schema output.
+   - Task-class routing (`classify`, `summarize`, `plan`, `codegen`, `repair`, `chat`) routes light utility tasks to fast lanes.
+6. **Local Model Adapter (Ollama & LM Studio)**:
+   - Probes `http://127.0.0.1:11434` and `http://127.0.0.1:1234/v1`, registering unlimited local lanes.
+   - Automatically handles utility tasks and simple edits locally for **0 cloud tokens**, reserving scarce cloud quota for hard codegen.
+7. **Per-Run Checkpoints & Diff Viewer**:
+   - Snapshots pre-run file states before writes/edits into `.myide/backups/runs/<runId>/`.
+   - Side-by-side Monaco DiffEditor with single-file **Revert** and one-click **"Undo this run"**.
+8. **Headless Browser Verification**:
+   - Evaluates web builds in a sandboxed, hidden BrowserWindow, capturing runtime console exceptions and offscreen screenshots.
+
+### Measured Benchmark Results (`npm run bench`)
+| Suite | Model Calls | Total Tokens | Edit Failures |
+| :--- | :--- | :--- | :--- |
+| **Phase 0 Baseline** | 33 calls | 45,104 tokens | 1 failure |
+| **Phase 8 Final** | **8 calls (-75.8%)** | **12,479 tokens (-72.3%)** | **0 failures** |
+
+See [docs/PERF.md](docs/PERF.md) for the detailed benchmark breakdown and tuning guide.
+
+---
+
 ## Status
 
 MyIDE is under active development against the

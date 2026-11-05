@@ -82,3 +82,4 @@ test("Checkpoints & Revert: snapshots pre-run state, captures line diffs, revert
     fs.rmSync(tmpRoot, { recursive: true, force: true });
   }
 });
+

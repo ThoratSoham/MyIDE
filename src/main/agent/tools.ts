@@ -3,6 +3,7 @@ import path from "path";
 import { spawn } from "child_process";
 import log from "electron-log";
 import { verifyWebsite, type VerifyReport } from "../quality/verifier";
+import { runHeadlessBrowserVerify } from "../quality/headless-verify";
 import { getSettings } from "../store";
 import { currentTelemetry } from "../telemetry";
 import { snapshotFileForRun } from "./checkpoints";
@@ -812,7 +813,7 @@ export const TOOLS: ToolSpec[] = [
       const rel = String(args?.path ?? "");
       const abs = insideWorkspace(ctx.state.workspaceRoot, rel);
       if (!fs.existsSync(abs)) return { ok: false, output: `No such page: ${rel}.` };
-      const report = await verifyWebsite({
+      const report = await runHeadlessBrowserVerify({
         pagePath: abs,
         workspaceRoot: ctx.state.workspaceRoot,
         outDir: path.join(ctx.state.myideDir, "verify"),
