@@ -42,6 +42,7 @@ import type {
   JobKind,
   JobMode,
   JobSnapshot,
+  LastRunState,
   PlanStep,
   ProviderKeyId,
   RunEstimate,
@@ -104,6 +105,7 @@ export class JobManager {
   private pendingQuestion: PendingQuestion | null = null;
   private pendingSuggested: SuggestedFile[] = [];
   private lastTraceId = "----";
+  private lastRun: LastRunState | null = null;
 
   // 50ms IPC streaming delta batcher state
   private streamMsgId: string | null = null;
@@ -315,10 +317,15 @@ export class JobManager {
       return null;
     }
 
+    let promptToRun = text;
     const detected: DetectedIntent =
       input.intent && input.intent !== "auto"
         ? { intent: input.intent, label: INTENT_LABELS[input.intent], confidence: "high", reason: "you picked it", matched: [] }
-        : routeIntent(text);
+        : routeIntent(text, this.lastRun ?? undefined);
+
+    if (detected.matched?.includes("fix-follow-up") && this.lastRun?.pendingIssues?.length) {
+      promptToRun = `${text}\n\nPENDING VERIFICATION ISSUES TO FIX:\n${this.lastRun.pendingIssues.join("\n")}`;
+    }
 
     const freeSaver = getSettings().freeTierSaver !== false;
     if (input.intent === "auto" && detected.confidence === "low" && (!freeSaver || text.length < 12)) {
@@ -332,7 +339,7 @@ export class JobManager {
       return null;
     }
 
-    return this.beginRun(text, input.mode, detected, traceId);
+    return this.beginRun(promptToRun, input.mode, detected, traceId);
   }
 
   answer(value: string): JobSnapshot | null {
@@ -649,6 +656,15 @@ export class JobManager {
       abortController: new AbortController(),
     };
     this.active = job;
+    this.lastRun = {
+      id: job.id,
+      intent,
+      userPrompt: text,
+      status: "running",
+      pinnedLane: undefined,
+      files: [],
+      pendingIssues: [],
+    };
     hop("chat", traceId, 4, `main: route chosen intent=${intent} pipeline=${kind} mode=${mode} (~${estimate.requests} requests)`);
 
     this.writeTaskMd(text);
@@ -696,6 +712,15 @@ export class JobManager {
       this.flushStreamDelta(true);
       job.running = false;
       job.finishedAt = Date.now();
+      if (this.lastRun) {
+        this.lastRun.status = job.paused ? "paused" : "done";
+        this.lastRun.files = job.files.map((f) => f.path);
+        if (job.agentState?.lastVerify && !job.agentState.lastVerify.ok) {
+          this.lastRun.pendingIssues = job.agentState.lastVerify.issues.map(
+            (i) => `• [${i.viewport}] ${i.message} (${i.fixHint})`,
+          );
+        }
+      }
       this.emitEvent({ type: "status", phase: "idle" });
       this.reportFiles(job);
 

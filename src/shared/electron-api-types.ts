@@ -327,6 +327,19 @@ export interface ChatAction {
   };
 }
 
+export interface LastRunState {
+  id: string;
+  intent: Intent;
+  userPrompt: string;
+  status: "idle" | "running" | "paused" | "failed" | "done";
+  pinnedLane?: string;
+  stage?: string;
+  files?: string[];
+  pendingIssues?: string[];
+  manifest?: unknown;
+  stylePack?: string;
+}
+
 export interface VisualReviewIssue {
   area: string;
   problem: string;

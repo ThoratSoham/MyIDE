@@ -146,3 +146,4 @@ h2 { font-size: clamp(1.75rem, 3.5vw, 2.5rem); }
     "Are typography, spacing, and buttons consistent across sections?",
   ],
 };
+

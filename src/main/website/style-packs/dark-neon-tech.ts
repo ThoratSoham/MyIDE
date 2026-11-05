@@ -161,3 +161,4 @@ h1 { font-size: clamp(2.5rem, 5.5vw, 4.25rem); }
     "Are technical details formatted with monospace typography?",
   ],
 };
+

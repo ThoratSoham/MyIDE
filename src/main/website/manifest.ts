@@ -108,3 +108,4 @@ export function formatManifestPromptInstruction(manifest: SiteManifest): string 
     "- Never reference uncreated local paths like `images/...` or `assets/...` unless you emit them as <file> blocks.",
   ].join("\n");
 }
+

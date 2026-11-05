@@ -187,3 +187,4 @@ h2 { font-size: clamp(2rem, 4vw, 3rem); margin-bottom: 1rem; }
     "Does the page use high-contrast flat color blocks?",
   ],
 };
+

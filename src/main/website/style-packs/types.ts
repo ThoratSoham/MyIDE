@@ -24,3 +24,4 @@ export interface StylePack {
   dontRules: string[];
   checklist: string[];
 }
+

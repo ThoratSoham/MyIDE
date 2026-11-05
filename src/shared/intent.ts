@@ -2,7 +2,7 @@
 // words and picks what to do. If a pipeline does not exist yet the caller falls
 // back to the general agent, so an unknown sentence can never fail a run.
 
-import type { DetectedIntent, Intent, JobMode, RunEstimate } from "./electron-api-types";
+import type { DetectedIntent, Intent, JobMode, LastRunState, RunEstimate } from "./electron-api-types";
 
 export type { Intent };
 
@@ -54,10 +54,66 @@ export const INTENT_LABELS: Record<Intent, string> = {
   chat: "Chat only",
 };
 
-export function routeIntent(raw: string): IntentResult {
+export function routeIntent(raw: string, lastRun?: LastRunState): IntentResult {
   const text = (raw ?? "").trim();
   if (!text) {
     return detected("chat", "low", [], "nothing was typed");
+  }
+
+  // PHASE 6: Stateful follow-up intent resolution
+  if (lastRun) {
+    const isResume = /^\s*(continue|resume|go on|proceed|keep going|retry)\s*$/i.test(text);
+    if (isResume) {
+      return detected(
+        lastRun.intent,
+        "high",
+        ["resume-follow-up"],
+        `resuming previous ${lastRun.intent} run`,
+      );
+    }
+
+    const isFix = /^\s*(fix it|fix this|fix errors?|why did it fail|fix visual issues?|repair)\s*$/i.test(text);
+    if (isFix) {
+      return detected(
+        lastRun.intent,
+        "high",
+        ["fix-follow-up"],
+        `fixing issues from previous ${lastRun.intent} run`,
+      );
+    }
+
+    if (lastRun.intent === "website") {
+      const isWebsiteEdit =
+        /^\s*(?:make it (?:darker|lighter|better|cleaner|pop)|apply (?:neo|glass|editorial|dark|neon|pastel|corporate|y2k)|restyle|redesign|add (?:a |an )?(?:pricing|hero|features?|faq|contact|menu|footer|about) section|change (?:the )?(?:color|theme|font|style))\b/i.test(
+          text,
+        );
+      if (isWebsiteEdit) {
+        return detected(
+          "website",
+          "high",
+          ["website-edit-follow-up"],
+          "incremental website edit/restyle",
+        );
+      }
+    }
+  }
+
+  // PHASE 6: Engineering prompt paste protection
+  // If prompt is large (>1500 chars) AND contains structured engineering tokens,
+  // route to agent (general coding), NEVER auto-route to website just because keywords like "site" or "page" appear.
+  if (text.length > 1500) {
+    const hasEngineeringStructure =
+      /\b(GOAL|PHASE|ROOT CAUSE|TypeScript|Electron|IPC|test:unit|typecheck|pull request|git commit|refactor|safeStorage|contextIsolation)\b/i.test(
+        text,
+      );
+    if (hasEngineeringStructure) {
+      return detected(
+        "agent",
+        "high",
+        ["engineering-prompt-paste"],
+        "large structured engineering prompt detected; routing to codebase agent",
+      );
+    }
   }
 
   for (const rule of RULES) {

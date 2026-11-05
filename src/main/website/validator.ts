@@ -92,3 +92,4 @@ export function sanitizeHtmlDocument(content: string): string {
 
   return content;
 }
+
