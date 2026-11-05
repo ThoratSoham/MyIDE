@@ -12,12 +12,56 @@ export interface Settings {
   terminalFontSize: number;
   // PART 3: timeout in seconds for ask_user popup questions (0 = no timeout).
   askQuestionTimeoutSec: number;
+  // PHASE 1: allow batched `actions: [{ tool, args }, ...]` (max 8 per turn).
+  batchedActions: boolean;
+  // PHASE 2: parse `<file path="...">` single-shot emission + auto-verify after edits.
+  singleShotFileTags?: boolean;
+  autoVerifyAfterEdits?: boolean;
+  // PHASE 3: fuzzy editFile cascade (whitespace/indent/line similarity).
+  fuzzyEditMatch?: boolean;
+  // PHASE 4: repo-map & rolling history summary.
+  repoMapEnabled?: boolean;
+  rollingSummaryEnabled?: boolean;
+  // PHASE 5: free-tier saver mode (single-shot explain, skip plan on small edits).
+  freeTierSaver?: boolean;
+  // PHASE 6: local Ollama / LM Studio provider lanes.
+  localModelsEnabled?: boolean;
+  ollamaBaseUrl?: string;
+  lmStudioBaseUrl?: string;
+  // PHASE 8: optional offscreen BrowserWindow website verification.
+  headlessBrowserVerify?: boolean;
   providerOverrides: {
     geminiApiKeyLast4: string;
     openrouterApiKeyLast4: string;
     groqApiKeyLast4: string;
   };
 }
+
+export const DEFAULT_SETTINGS: Settings = {
+  theme: "dark",
+  defaultMode: "balanced",
+  chromePath: "",
+  autoResumeAtQuotaReset: true,
+  askWorkspaceEachTime: false,
+  terminalFontSize: 13,
+  askQuestionTimeoutSec: 120,
+  batchedActions: true,
+  singleShotFileTags: true,
+  autoVerifyAfterEdits: true,
+  fuzzyEditMatch: true,
+  repoMapEnabled: true,
+  rollingSummaryEnabled: true,
+  freeTierSaver: true,
+  localModelsEnabled: true,
+  ollamaBaseUrl: "http://127.0.0.1:11434",
+  lmStudioBaseUrl: "http://127.0.0.1:1234",
+  headlessBrowserVerify: false,
+  providerOverrides: {
+    geminiApiKeyLast4: "",
+    openrouterApiKeyLast4: "",
+    groqApiKeyLast4: "",
+  },
+};
 
 export interface FsEntry {
   name: string;

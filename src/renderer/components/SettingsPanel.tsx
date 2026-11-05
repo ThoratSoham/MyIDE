@@ -13,12 +13,13 @@ import {
   TerminalSquare,
   X,
 } from "lucide-react";
-import type {
-  AiStatus,
-  KeyStatus,
-  KeyTestResult,
-  ProviderKeyId,
-  Settings,
+import {
+  DEFAULT_SETTINGS,
+  type AiStatus,
+  type KeyStatus,
+  type KeyTestResult,
+  type ProviderKeyId,
+  type Settings,
 } from "../../shared/electron-api-types";
 import { NovaLogoMark } from "../branding/NovaBrand";
 import { Badge, Kbd } from "../design-system/primitives";
@@ -33,16 +34,7 @@ interface Props {
 
 type SettingsTab = "keys" | "appearance" | "agent" | "terminal" | "quotas";
 
-const FALLBACK: Settings = {
-  theme: "system",
-  defaultMode: "balanced",
-  chromePath: "",
-  autoResumeAtQuotaReset: true,
-  askWorkspaceEachTime: false,
-  terminalFontSize: 13,
-  askQuestionTimeoutSec: 120,
-  providerOverrides: { geminiApiKeyLast4: "", openrouterApiKeyLast4: "", groqApiKeyLast4: "" },
-};
+const FALLBACK: Settings = { ...DEFAULT_SETTINGS, theme: "system" };
 
 const NAV_TABS: Array<{
   id: SettingsTab;

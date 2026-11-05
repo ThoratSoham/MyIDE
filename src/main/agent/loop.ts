@@ -7,6 +7,7 @@ import { formatLocalTime } from "../ai/router";
 import { estimateTokens } from "../ai/tokenize";
 import { parseJsonLoose } from "../quality/json-repair";
 import { validateSchema } from "../quality/schema";
+import { getSettings } from "../store";
 import { currentTelemetry } from "../telemetry";
 import { parseSuggestedFiles, type SuggestedFile } from "./suggest";
 import {
@@ -105,14 +106,44 @@ const KEEP_RECENT_MESSAGES = 6;
 const DEFAULT_TOKEN_BUDGET = 4_800;
 const MAX_TOOL_HISTORY_CHARS = 4_000;
 const OLD_RESULT_CHARS = 240;
+export const MAX_BATCH_ACTIONS = 8;
+
+const READ_ONLY_TOOLS = new Set(["readFile", "listDir", "listTree", "grep", "getSymbols"]);
+
+interface ActionSpec {
+  tool: string;
+  args?: Record<string, unknown>;
+}
+
+interface AgentTurnEnvelope {
+  thought?: string;
+  tool?: string;
+  args?: Record<string, unknown>;
+  actions?: ActionSpec[];
+  answer?: string;
+}
+
+const ACTION_ITEM_SCHEMA = {
+  type: "object",
+  required: ["tool"],
+  properties: {
+    tool: { type: "string", minLength: 1 },
+    args: { type: "object" },
+  },
+};
 
 const AGENT_SCHEMA = {
   type: "object",
   required: ["thought"],
   properties: {
-    thought: { type: "string", minLength: 1 },
+    thought: { type: "string" },
     tool: { type: "string" },
     args: { type: "object" },
+    actions: {
+      type: "array",
+      minItems: 1,
+      items: ACTION_ITEM_SCHEMA,
+    },
     answer: { type: "string" },
   },
 };
@@ -441,9 +472,7 @@ export async function runAgent(ai: AIService, state: AgentState, opts: AgentOpti
 
       const parsed = parseJsonLoose(res.content ?? "");
       const schemaOk = parsed.ok && validateSchema(AGENT_SCHEMA, parsed.value).length === 0;
-      let value = schemaOk
-        ? (parsed.value as { thought: string; tool?: string; args?: unknown; answer?: string })
-        : null;
+      let value = schemaOk ? (parsed.value as AgentTurnEnvelope) : null;
 
       let typedCode: SuggestedFile[] = [];
       if (!value && allowTools && state.changedFiles.size === 0) {
@@ -467,7 +496,7 @@ export async function runAgent(ai: AIService, state: AgentState, opts: AgentOpti
           role: "user",
           content:
             "That was not valid JSON for the agreed shape. Reply with ONLY minified JSON: " +
-            `{"thought":"...","tool":"...","args":{...}} or {"thought":"...","answer":"..."}.`,
+            `{"thought":"...","actions":[{"tool":"...","args":{...}}]}, {"thought":"...","tool":"...","args":{...}}, or {"thought":"...","answer":"..."}.`,
         });
         steps++;
         continue;
@@ -476,7 +505,17 @@ export async function runAgent(ai: AIService, state: AgentState, opts: AgentOpti
 
       if (value.thought) opts.onEvent({ type: "assistant", text: value.thought, model: res.laneUsed?.id });
 
-      if (!value.tool) {
+      const batchEnabled = getSettings().batchedActions !== false;
+      const rawBatch: ActionSpec[] =
+        Array.isArray(value.actions) && value.actions.length > 0
+          ? batchEnabled
+            ? value.actions
+            : [value.actions[0]]
+          : value.tool
+          ? [{ tool: value.tool, args: value.args }]
+          : [];
+
+      if (rawBatch.length === 0) {
         const reply = (value.answer ?? value.thought ?? "").trim();
         const freshWork = allowTools && state.changedFiles.size === 0;
         const suggested = typedCode.length > 0 ? typedCode : freshWork ? parseSuggestedFiles(reply) : [];
@@ -487,7 +526,7 @@ export async function runAgent(ai: AIService, state: AgentState, opts: AgentOpti
           history.push({
             role: "user",
             content: suggested.length
-              ? "You answered with code as plain text, so NO file was created. Use writeFile now — one call per file — " +
+              ? "You answered with code as plain text, so NO file was created. Use writeFile now (batching all files in actions) " +
                 "and do not paste the code in your reply."
               : "You replied with text only. If this job needs files to change, call a tool now (start with listDir). " +
                 "If it really is a question, answer it directly with the 'answer' field.",
@@ -522,19 +561,21 @@ export async function runAgent(ai: AIService, state: AgentState, opts: AgentOpti
         continue;
       }
 
-      const tool = findTool(value.tool);
-      if (!tool) {
-        history.push({ role: "assistant", content: JSON.stringify(value).slice(0, 600) });
-        history.push({ role: "user", content: `There is no tool called "${value.tool}". Available tools:\n${toolsForPrompt()}` });
-        steps++;
-        continue;
+      const cappedBatch = rawBatch.slice(0, MAX_BATCH_ACTIONS);
+      const overflowCount = Math.max(0, rawBatch.length - cappedBatch.length);
+      const isSingleLegacyCall = !Array.isArray(value.actions) && cappedBatch.length === 1;
+
+      interface ExecutedActionRecord {
+        tool: string;
+        args: Record<string, unknown>;
+        ok: boolean;
+        output: string;
+        complete?: boolean;
       }
 
-      const summaryLabel = describeToolCall(tool.name, value.args);
-      opts.onEvent({ type: "tool-start", name: tool.name, args: value.args, summaryLabel });
-      currentTelemetry()?.recordToolCall();
-
-      const result = await tool.run(value.args ?? {}, {
+      const executed: ExecutedActionRecord[] = [];
+      let stoppedAtIndex = -1;
+      const toolCtx = {
         state,
         requestApproval: opts.requestApproval,
         askUser: opts.askUser,
@@ -542,59 +583,190 @@ export async function runAgent(ai: AIService, state: AgentState, opts: AgentOpti
         onAgentOutput: opts.onAgentOutput,
         signal: opts.signal,
         abortSignal: abortController.signal,
-      });
+      };
 
-      if (opts.signal.cancelled || abortController.signal.aborted) {
-        saveRun(state, runId, history, steps, "stopped", startedAt, opts.taskMd);
-        return "Stopped by the user.";
+      let idx = 0;
+      while (idx < cappedBatch.length) {
+        if (opts.signal.cancelled || abortController.signal.aborted) {
+          saveRun(state, runId, history, steps, "stopped", startedAt, opts.taskMd);
+          return "Stopped by the user.";
+        }
+
+        const current = cappedBatch[idx];
+        const firstTool = findTool(current.tool);
+
+        // Contiguous independent read-only actions run in parallel via Promise.all.
+        if (firstTool && READ_ONLY_TOOLS.has(current.tool)) {
+          const parallelSlice: Array<{ spec: ActionSpec; toolDef: NonNullable<ReturnType<typeof findTool>>; summaryLabel: string }> = [];
+          while (idx < cappedBatch.length) {
+            const candidate = cappedBatch[idx];
+            const td = findTool(candidate.tool);
+            if (!td || !READ_ONLY_TOOLS.has(candidate.tool)) break;
+            const summaryLabel = describeToolCall(td.name, candidate.args);
+            opts.onEvent({ type: "tool-start", name: td.name, args: candidate.args, summaryLabel });
+            currentTelemetry()?.recordToolCall();
+            parallelSlice.push({ spec: candidate, toolDef: td, summaryLabel });
+            idx++;
+          }
+
+          const parallelResults = await Promise.all(
+            parallelSlice.map((item) => item.toolDef.run(item.spec.args ?? {}, toolCtx)),
+          );
+
+          if (opts.signal.cancelled || abortController.signal.aborted) {
+            saveRun(state, runId, history, steps, "stopped", startedAt, opts.taskMd);
+            return "Stopped by the user.";
+          }
+
+          let readFailed = false;
+          for (let p = 0; p < parallelSlice.length; p++) {
+            const item = parallelSlice[p];
+            const r = parallelResults[p];
+            opts.onEvent({
+              type: "tool",
+              name: item.toolDef.name,
+              args: item.spec.args,
+              ok: r.ok,
+              output: r.output,
+              summaryLabel: item.summaryLabel,
+            });
+            executed.push({
+              tool: item.toolDef.name,
+              args: item.spec.args ?? {},
+              ok: r.ok,
+              output: r.output,
+            });
+            if (!r.ok) {
+              stoppedAtIndex = executed.length;
+              readFailed = true;
+              break;
+            }
+          }
+          if (readFailed) break;
+          continue;
+        }
+
+        // Unknown tool -> fail immediately, stop batch, return prior successes + this error.
+        if (!firstTool) {
+          const unknownMsg = `There is no tool called "${current.tool}". Available tools:\n${toolsForPrompt()}`;
+          executed.push({
+            tool: current.tool,
+            args: current.args ?? {},
+            ok: false,
+            output: unknownMsg,
+          });
+          stoppedAtIndex = executed.length;
+          break;
+        }
+
+        const summaryLabel = describeToolCall(firstTool.name, current.args);
+        opts.onEvent({ type: "tool-start", name: firstTool.name, args: current.args, summaryLabel });
+        currentTelemetry()?.recordToolCall();
+
+        const result = await firstTool.run(current.args ?? {}, toolCtx);
+
+        if (opts.signal.cancelled || abortController.signal.aborted) {
+          saveRun(state, runId, history, steps, "stopped", startedAt, opts.taskMd);
+          return "Stopped by the user.";
+        }
+
+        opts.onEvent({
+          type: "tool",
+          name: firstTool.name,
+          args: current.args,
+          ok: result.ok,
+          output: result.output,
+          summaryLabel,
+        });
+        if (state.plan.length) opts.onEvent({ type: "plan", steps: state.plan });
+
+        const isComplete = Boolean(result.data && (result.data as { complete?: boolean }).complete);
+        executed.push({
+          tool: firstTool.name,
+          args: current.args ?? {},
+          ok: result.ok,
+          output: result.output,
+          complete: isComplete,
+        });
+
+        if (isComplete) {
+          saveRun(state, runId, history, steps, "completed", startedAt, opts.taskMd);
+          opts.onEvent({ type: "done", summary: result.output, model: res.laneUsed?.id });
+          return result.output;
+        }
+
+        if (!result.ok) {
+          stoppedAtIndex = executed.length;
+          break;
+        }
+
+        idx++;
       }
 
-      opts.onEvent({
-        type: "tool",
-        name: tool.name,
-        args: value.args,
-        ok: result.ok,
-        output: result.output,
-        summaryLabel,
-      });
-      if (state.plan.length) opts.onEvent({ type: "plan", steps: state.plan });
-
-      if (result.data && (result.data as any).complete) {
-        saveRun(state, runId, history, steps, "completed", startedAt, opts.taskMd);
-        opts.onEvent({ type: "done", summary: result.output, model: res.laneUsed?.id });
-        return result.output;
-      }
-
-      const key = `${tool.name}|${JSON.stringify(value.args ?? {})}|${hashText(result.output)}`;
-      recent.push(key);
+      // Repeat-call detector: hash the whole requested batch + combined results.
+      const normalizedBatch = cappedBatch.map((a) => ({ tool: a.tool, args: a.args ?? {} }));
+      const batchHash = hashText(
+        JSON.stringify(normalizedBatch) +
+          "||" +
+          executed.map((r) => `${r.tool}:${r.ok}:${hashText(r.output)}`).join("|"),
+      );
+      recent.push(batchHash);
       if (recent.length > 3) recent.shift();
       const isLoop = recent.length === 3 && recent.every((k) => k === recent[0]);
 
+      const assistantRecord = isSingleLegacyCall
+        ? JSON.stringify({ tool: cappedBatch[0].tool, args: cappedBatch[0].args }).slice(0, 1200)
+        : JSON.stringify({ actions: normalizedBatch }).slice(0, 1800);
+
       if (isLoop) {
+        const label = cappedBatch.map((a) => a.tool).join("+");
         if (!loopRecovered) {
           loopRecovered = true;
-          opts.onEvent({ type: "notice", text: "Same action repeated three times — asking for a different approach." });
-          history.push({ role: "assistant", content: JSON.stringify({ tool: tool.name, args: value.args }).slice(0, 600) });
+          opts.onEvent({ type: "notice", text: "Same action batch repeated three times — asking for a different approach." });
+          history.push({ role: "assistant", content: assistantRecord.slice(0, 600) });
           history.push({
             role: "user",
             content:
-              "You have done exactly this three times with the same result. Do not repeat it. " +
+              "You have executed this exact action batch three times with the same result. Do not repeat it. " +
               "Diagnose the cause, then either change the arguments, use a different tool, or explain the blocker.",
           });
           recent.length = 0;
           steps++;
           continue;
         }
-        return pause(state, runId, history, opts, startedAt, `The same ${tool.name} call kept returning the same result.`);
+        return pause(state, runId, history, opts, startedAt, `The same ${label} call kept returning the same result.`);
       }
 
-      // Truncate oversized tool output before adding to conversation history.
-      const trimmedToolOut = clip(result.output, MAX_TOOL_HISTORY_CHARS);
-      history.push({ role: "assistant", content: JSON.stringify({ tool: tool.name, args: value.args }).slice(0, 1200) });
-      history.push({
-        role: "user",
-        content: `<tool_result name="${tool.name}" ok="${result.ok}">\n${trimmedToolOut}\n</tool_result>`,
-      });
+      // Build combined tool-result message (preserving legacy <tool_result> shape for 1-action legacy turns).
+      let combinedToolMessage: string;
+      if (isSingleLegacyCall && executed.length === 1 && overflowCount === 0) {
+        const only = executed[0];
+        const trimmedToolOut = clip(only.output, MAX_TOOL_HISTORY_CHARS);
+        combinedToolMessage = `<tool_result name="${only.tool}" ok="${only.ok}">\n${trimmedToolOut}\n</tool_result>`;
+      } else {
+        const perItemBudget = Math.max(800, Math.floor((MAX_TOOL_HISTORY_CHARS * 1.5) / Math.max(1, executed.length)));
+        const lines: string[] = [`<tool_results executed="${executed.length}" requested="${rawBatch.length}">`];
+        executed.forEach((r, i) => {
+          lines.push(
+            `<tool_result index="${i + 1}" name="${r.tool}" ok="${r.ok}">\n${clip(r.output, perItemBudget)}\n</tool_result>`,
+          );
+        });
+        if (stoppedAtIndex !== -1 && stoppedAtIndex < cappedBatch.length) {
+          const skipped = cappedBatch.length - stoppedAtIndex + overflowCount;
+          lines.push(
+            `[Batch stopped at action ${stoppedAtIndex}/${rawBatch.length} because it failed or was denied; remaining ${skipped} action(s) were NOT executed.]`,
+          );
+        } else if (overflowCount > 0) {
+          lines.push(
+            `[Batch capped at ${MAX_BATCH_ACTIONS} actions; ${overflowCount} trailing action(s) were skipped — emit them next turn.]`,
+          );
+        }
+        lines.push("</tool_results>");
+        combinedToolMessage = lines.join("\n");
+      }
+
+      history.push({ role: "assistant", content: assistantRecord });
+      history.push({ role: "user", content: combinedToolMessage });
 
       steps++;
       if (steps % 2 === 0) saveRun(state, runId, history, steps, "running", startedAt, opts.taskMd);
@@ -613,7 +785,8 @@ export async function runAgent(ai: AIService, state: AgentState, opts: AgentOpti
 // ---------------------------------------------------------------------------
 
 function systemPrompt(state: AgentState, allowTools: boolean): string {
-  const cacheKey = `${state.workspaceRoot}::${allowTools ? "tools" : "chat"}`;
+  const batchEnabled = getSettings().batchedActions !== false;
+  const cacheKey = `${state.workspaceRoot}::${allowTools ? "tools" : "chat"}::batch=${batchEnabled ? 1 : 0}`;
   const hit = staticSystemPromptCache.get(cacheKey);
   if (hit) return hit;
 
@@ -624,6 +797,27 @@ function systemPrompt(state: AgentState, allowTools: boolean): string {
         "- Reply with ONE JSON object per turn: {\"thought\":\"...\",\"answer\":\"...\"}.",
         "- Tools are disabled. Never call a tool and never claim you changed a file.",
         "- Answer clearly and completely in the 'answer' field. Markdown is allowed.",
+        "",
+        `Workspace root: ${state.workspaceRoot}`,
+      ].join("\n")
+    : batchEnabled
+    ? [
+        "You are MyIDE's coding agent. You work only inside the user's workspace folder.",
+        "Output ONLY one valid JSON object per turn matching one of these shapes:",
+        '1) Batched actions (PREFERRED, max 8): {"thought":"...","actions":[{"tool":"name","args":{...}}, ...]}',
+        '2) Single action: {"thought":"...","tool":"name","args":{...}}',
+        '3) Final text answer (when no tool needed): {"thought":"...","answer":"..."}',
+        'Example batched turn: {"thought":"Create module + test and run tests","actions":[{"tool":"writeFile","args":{"path":"src/add.js","content":"export const add=(a,b)=>a+b;\\n"}},{"tool":"writeFile","args":{"path":"src/add.test.js","content":"import assert from \'node:assert\';\\nimport {add} from \'./add.js\';\\nassert.equal(add(1,2),3);\\n"}},{"tool":"executeCommand","args":{"command":"node src/add.test.js","reason":"Verify add()"}}]}',
+        "Rules:",
+        "- Batch everything you can foresee in a single turn (read all needed files together; create/edit all files then run verify/build/test in the same turn).",
+        "- Independent read-only actions (readFile, listDir, listTree, grep, getSymbols) run in parallel; write/command actions run sequentially and stop at the first failure or denial.",
+        "- Never paste file contents into 'answer'. Put every file on disk with writeFile/editFile.",
+        "- Paths are relative to workspace root. .env files cannot be read or written. Overwrites are backed up; deletes go to .myide/trash.",
+        "- Commands not on the allowlist pause for user approval; explain why in 'thought'. Use ask_user (2-4 options) only when a genuine decision is needed.",
+        "- After changing any HTML file you MUST call verifyWebsite on it before markComplete.",
+        "",
+        "Tools:",
+        toolsForPrompt(),
         "",
         `Workspace root: ${state.workspaceRoot}`,
       ].join("\n")

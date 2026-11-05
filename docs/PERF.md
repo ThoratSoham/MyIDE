@@ -29,3 +29,22 @@ This document records measured model calls, token budgets, tool executions, and 
 | 5. Explain a file | 3 | 4,950 | 202 | 5,152 | 1 | 0 |
 | **TOTAL (5 tasks)** | **33** | **42,572** | **2,532** | **45,104** | **31** | **1** |
 
+
+---
+
+## Phase 1 — Batched Actions in the Agent Loop (`src/main/agent/loop.ts`)
+
+**Changes:**
+- Extended `AGENT_SCHEMA` to accept `actions: [{ tool, args }, ...]` (capped at 8 per turn) alongside legacy single-tool `{ tool, args }`.
+- Contiguous read-only actions (`readFile`, `listDir`, `listTree`, `grep`, `getSymbols`) execute in parallel via `Promise.all`; mutating and command actions run sequentially and stop immediately at the first failure or command-approval denial, returning all executed results in one `<tool_results>` block.
+- Updated repeat-call detector to hash the normalized action batch + combined result hashes.
+- Added compact batched schema + 1-line JSON example to the system prompt (`Settings.batchedActions`, default `true`).
+
+| Task | Model Calls | Input Tokens | Output Tokens | Total Tokens | Tool Calls | Failed Edits |
+| :--- | ---: | ---: | ---: | ---: | ---: | ---: |
+| 1. Create a small website | 2 (-60%) | 2,989 | 1,259 | 4,248 | 5 | 0 |
+| 2. Fix a TS error | 6 (-25%) | 7,539 | 311 | 7,850 | 7 | 1 |
+| 3. Add function + test | 3 (-50%) | 3,645 | 278 | 3,923 | 6 | 0 |
+| 4. Rename across files | 4 (-64%) | 5,934 | 424 | 6,358 | 11 | 0 |
+| 5. Explain a file | 3 (0%) | 5,535 | 202 | 5,737 | 1 | 0 |
+| **TOTAL (5 tasks)** | **18 (-45.5%)** | **25,642** | **2,474** | **28,116 (-37.7%)** | **30** | **1** |
