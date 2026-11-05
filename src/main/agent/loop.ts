@@ -9,6 +9,8 @@ import { parseJsonLoose } from "../quality/json-repair";
 import { validateSchema } from "../quality/schema";
 import { getSettings } from "../store";
 import { currentTelemetry } from "../telemetry";
+import { runAutoVerifyAfterWrites } from "./auto-verify";
+import { applyParsedFileTags, parseFileTags } from "./file-tags";
 import { parseSuggestedFiles, type SuggestedFile } from "./suggest";
 import {
   clip,
@@ -474,6 +476,63 @@ export async function runAgent(ai: AIService, state: AgentState, opts: AgentOpti
       const schemaOk = parsed.ok && validateSchema(AGENT_SCHEMA, parsed.value).length === 0;
       let value = schemaOk ? (parsed.value as AgentTurnEnvelope) : null;
 
+      // PHASE 2A: If singleShotFileTags is enabled and the model emitted `<file path="...">` blocks
+      // (either directly as raw text or inside `answer`), apply them safely to the workspace.
+      const fileTagsEnabled = getSettings().singleShotFileTags !== false;
+      const inlineFileTags =
+        allowTools && fileTagsEnabled
+          ? parseFileTags(!value ? (res.content ?? "") : !value.tool && !value.actions ? (value.answer ?? "") : "")
+          : [];
+
+      if (inlineFileTags.length > 0) {
+        const writeSummary = await applyParsedFileTags(
+          inlineFileTags,
+          state,
+          {
+            requestApproval: opts.requestApproval,
+            askUser: opts.askUser,
+            onPreview: opts.onPreview,
+            onAgentOutput: opts.onAgentOutput,
+            signal: opts.signal,
+            abortSignal: abortController.signal,
+          },
+          (info) => {
+            currentTelemetry()?.recordToolCall();
+            opts.onEvent({
+              type: "tool",
+              name: "writeFile",
+              args: { path: info.path },
+              ok: info.ok,
+              output: info.output,
+              summaryLabel: `Writing ${info.path}`,
+            });
+          },
+        );
+
+        const writtenPaths = writeSummary.written.map((w) => w.path);
+        const autoVerifyEnabled = getSettings().autoVerifyAfterEdits !== false;
+        const autoRes =
+          autoVerifyEnabled && writtenPaths.length > 0
+            ? await runAutoVerifyAfterWrites(state, writtenPaths)
+            : null;
+
+        if (writeSummary.errors.length > 0 || (autoRes && !autoRes.ok)) {
+          const errMsg = [
+            ...writeSummary.errors.map((e) => `${e.path}: ${e.error}`),
+            ...(autoRes && !autoRes.ok ? [autoRes.formattedFeedback] : []),
+          ].join("\n");
+          history.push({ role: "assistant", content: `Wrote ${writtenPaths.join(", ")}` });
+          history.push({ role: "user", content: `<tool_results>\n${errMsg}\n</tool_results>` });
+          steps++;
+          continue;
+        }
+
+        const doneSummary = `Wrote ${writtenPaths.join(", ")}.`;
+        saveRun(state, runId, history, steps, "completed", startedAt, opts.taskMd);
+        opts.onEvent({ type: "done", summary: doneSummary, model: res.laneUsed?.id });
+        return doneSummary;
+      }
+
       let typedCode: SuggestedFile[] = [];
       if (!value && allowTools && state.changedFiles.size === 0) {
         typedCode = parseSuggestedFiles(res.content ?? "");
@@ -737,12 +796,26 @@ export async function runAgent(ai: AIService, state: AgentState, opts: AgentOpti
         return pause(state, runId, history, opts, startedAt, `The same ${label} call kept returning the same result.`);
       }
 
+      // PHASE 2C: Auto-verify after writes (zero extra planning tokens).
+      const WRITE_TOOL_NAMES = new Set(["writeFile", "editFile", "replaceLines"]);
+      const writtenThisTurn = executed
+        .filter((r) => r.ok && WRITE_TOOL_NAMES.has(r.tool) && typeof r.args?.path === "string")
+        .map((r) => String(r.args.path));
+      const autoVerifyRes =
+        writtenThisTurn.length > 0 && getSettings().autoVerifyAfterEdits !== false
+          ? await runAutoVerifyAfterWrites(state, writtenThisTurn)
+          : null;
+      const autoVerifySuffix =
+        autoVerifyRes && autoVerifyRes.ran && autoVerifyRes.formattedFeedback
+          ? `\n${autoVerifyRes.formattedFeedback}`
+          : "";
+
       // Build combined tool-result message (preserving legacy <tool_result> shape for 1-action legacy turns).
       let combinedToolMessage: string;
       if (isSingleLegacyCall && executed.length === 1 && overflowCount === 0) {
         const only = executed[0];
         const trimmedToolOut = clip(only.output, MAX_TOOL_HISTORY_CHARS);
-        combinedToolMessage = `<tool_result name="${only.tool}" ok="${only.ok}">\n${trimmedToolOut}\n</tool_result>`;
+        combinedToolMessage = `<tool_result name="${only.tool}" ok="${only.ok}">\n${trimmedToolOut}${autoVerifySuffix}\n</tool_result>`;
       } else {
         const perItemBudget = Math.max(800, Math.floor((MAX_TOOL_HISTORY_CHARS * 1.5) / Math.max(1, executed.length)));
         const lines: string[] = [`<tool_results executed="${executed.length}" requested="${rawBatch.length}">`];
@@ -760,6 +833,9 @@ export async function runAgent(ai: AIService, state: AgentState, opts: AgentOpti
           lines.push(
             `[Batch capped at ${MAX_BATCH_ACTIONS} actions; ${overflowCount} trailing action(s) were skipped — emit them next turn.]`,
           );
+        }
+        if (autoVerifySuffix) {
+          lines.push(autoVerifySuffix.trimStart());
         }
         lines.push("</tool_results>");
         combinedToolMessage = lines.join("\n");

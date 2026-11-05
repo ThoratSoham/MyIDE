@@ -15,6 +15,7 @@ import {
   type ToolContext,
 } from "./agent/tools";
 import type { SuggestedFile } from "./agent/suggest";
+import { runSingleShotWebsite } from "./pipeline/website-single-shot";
 import { STARTER_FILES } from "./starter";
 import { getSettings } from "./store";
 import { SessionStore } from "./sessions";
@@ -756,18 +757,31 @@ export class JobManager {
     hop("chat", job.traceId, 5, "main: writing starter template (index.html, css/style.css, js/main.js)");
     await this.seedStarter(job, state);
 
-    const summary = await runAgent(this.deps.ai, state, {
-      runId: job.id,
-      taskMd: websiteBrief(job.brief),
-      signal: job.signal,
-      abortController: job.abortController,
-      onEvent: (e) => this.onAgentEvent(job, e),
-      requestApproval: (command, reason) => this.requestApproval(command, reason),
-      askUser: (args) => this.askUserFromAgent(args, job.abortController.signal),
-      onPreview: (rel) => this.deps.onPreview(rel),
-      onAgentOutput: (chunk) => this.deps.onAgentOutput?.(chunk),
-      onSuggestedFiles: (files) => this.offerSuggested(files),
-    });
+    const summary =
+      getSettings().singleShotFileTags !== false
+        ? await runSingleShotWebsite(this.deps.ai, state, {
+            runId: job.id,
+            brief: job.brief,
+            signal: job.signal,
+            abortController: job.abortController,
+            onEvent: (e) => this.onAgentEvent(job, e),
+            requestApproval: (command, reason) => this.requestApproval(command, reason),
+            onPreview: (rel) => this.deps.onPreview(rel),
+            onAgentOutput: (chunk) => this.deps.onAgentOutput?.(chunk),
+            onSuggestedFiles: (files) => this.offerSuggested(files),
+          })
+        : await runAgent(this.deps.ai, state, {
+            runId: job.id,
+            taskMd: websiteBrief(job.brief),
+            signal: job.signal,
+            abortController: job.abortController,
+            onEvent: (e) => this.onAgentEvent(job, e),
+            requestApproval: (command, reason) => this.requestApproval(command, reason),
+            askUser: (args) => this.askUserFromAgent(args, job.abortController.signal),
+            onPreview: (rel) => this.deps.onPreview(rel),
+            onAgentOutput: (chunk) => this.deps.onAgentOutput?.(chunk),
+            onSuggestedFiles: (files) => this.offerSuggested(files),
+          });
     job.plan = state.plan;
     this.emitEvent({ type: "done", summary });
   }

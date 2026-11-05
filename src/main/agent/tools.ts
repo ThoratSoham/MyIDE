@@ -104,7 +104,7 @@ export function isDangerousCommand(command: string): boolean {
   return BLOCKED_PATTERNS.some((re) => re.test(command));
 }
 
-function insideWorkspace(root: string, rel: string): string {
+export function insideWorkspace(root: string, rel: string): string {
   const abs = path.resolve(root, rel);
   const normRoot = path.resolve(root);
   if (abs !== normRoot && !abs.startsWith(normRoot + path.sep)) {
@@ -113,7 +113,7 @@ function insideWorkspace(root: string, rel: string): string {
   return abs;
 }
 
-function isEnvFile(p: string): boolean {
+export function isEnvFile(p: string): boolean {
   const name = path.basename(p);
   return name === ".env" || name.startsWith(".env.");
 }

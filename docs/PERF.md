@@ -48,3 +48,21 @@ This document records measured model calls, token budgets, tool executions, and 
 | 4. Rename across files | 4 (-64%) | 5,934 | 424 | 6,358 | 11 | 0 |
 | 5. Explain a file | 3 (0%) | 5,535 | 202 | 5,737 | 1 | 0 |
 | **TOTAL (5 tasks)** | **18 (-45.5%)** | **25,642** | **2,474** | **28,116 (-37.7%)** | **30** | **1** |
+
+---
+
+## Phase 2 — Single-Shot `<file>` Emission, Merged Website Build+Verify & Auto-Verify (`file-tags.ts`, `website-single-shot.ts`, `auto-verify.ts`)
+
+**Changes:**
+- Added `<file path="relative/path.ext">...</file>` parser (`src/main/agent/file-tags.ts`) with unclosed-EOF tolerance, inner markdown-fence stripping, and full `insideWorkspace` + `.env` blocking + `.myide/backups` protection.
+- Merged Website Plan + Build (`src/main/pipeline/website-single-shot.ts`) into 1 single-shot `<file>` model call followed by local `verifyWebsite` and at most 2 targeted snippet-only repair rounds (`Settings.singleShotFileTags`).
+- Added automatic post-write local verification (`src/main/agent/auto-verify.ts`): caches detected project tooling in `.myide/project.json` and runs local `tsc --noEmit`, `eslint` on changed files, `verifyWebsite` on HTML, and matching unit test files automatically after write/edit turns, summarizing errors to `<= 40` deduplicated lines (`Settings.autoVerifyAfterEdits`).
+
+| Task | Model Calls | Input Tokens | Output Tokens | Total Tokens | Tool Calls | Failed Edits |
+| :--- | ---: | ---: | ---: | ---: | ---: | ---: |
+| 1. Create a small website | 1 (-80% vs P0) | 370 | 1,098 | 1,468 | 4 | 0 |
+| 2. Fix a TS error | 5 (-38% vs P0) | 6,017 | 248 | 6,265 | 6 | 1 |
+| 3. Add function + test | 3 (-50% vs P0) | 3,667 | 278 | 3,945 | 6 | 0 |
+| 4. Rename across files | 4 (-64% vs P0) | 5,934 | 424 | 6,358 | 11 | 0 |
+| 5. Explain a file | 3 (0% vs P0) | 5,535 | 202 | 5,737 | 1 | 0 |
+| **TOTAL (5 tasks)** | **16 (-51.5% vs P0)** | **21,523** | **2,250** | **23,773 (-47.3% vs P0)** | **28** | **1** |
