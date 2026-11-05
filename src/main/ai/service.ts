@@ -442,6 +442,18 @@ export class AIService {
       .digest("hex");
   }
 
+  getRouter(): Router {
+    return this.router;
+  }
+
+  getLanes(): Lane[] {
+    return this.lanes;
+  }
+
+  getPreferredLane(role: TaskClass = "codegen"): Lane | undefined {
+    return this.lanesForRole(role)[0];
+  }
+
   async complete(
     taskClass: TaskClass,
     messages: ProviderRequest["messages"],

@@ -24,6 +24,7 @@ import {
   getStylePack,
   type StylePack,
 } from "../website/style-packs";
+import { runStagedWebsite } from "../website/staged-builder";
 
 // PHASE 2B: Merged single-shot Website pipeline (Brief -> Build all files in 1 call -> Local Verify -> up to 2 targeted snippet repairs).
 
@@ -314,6 +315,43 @@ export async function runSingleShotWebsite(
     state.lastVerify = report;
     const summary = `Restyled existing website with ${pack.name} design system (preserved content and structure).`;
     opts.onEvent({ type: "done", summary });
+    return summary;
+  }
+
+  // Capability-aware routing: if pinned lane or primary eligible lane has maxOutputTokens < 16000,
+  // execute staged builder (Phase 4) to prevent truncation on 4k-5.5k token lanes (like Groq)
+  const preferredLane = opts.pinnedLaneId
+    ? ai.getLanes?.()?.find((l) => l.id === opts.pinnedLaneId)
+    : ai.getPreferredLane?.("codegen");
+  const useStagedBuilder =
+    preferredLane &&
+    preferredLane.capabilities &&
+    (preferredLane.capabilities.maxOutputTokens ?? 0) < 16000 &&
+    typeof ai.getRouter === "function";
+
+  if (useStagedBuilder) {
+    const staged = await runStagedWebsite({
+      state,
+      router: ai.getRouter(),
+      brief: opts.brief,
+      defaultStyle: getSettings().defaultStyle,
+      pinnedLane: preferredLane,
+      onEvent: opts.onEvent,
+      signal: opts.abortController.signal,
+    });
+
+    if (!staged.ok) {
+      return staged.error || "Staged website build failed.";
+    }
+
+    const report = await verifyWebsite({
+      pagePath: indexAbs,
+      workspaceRoot: state.workspaceRoot,
+      outDir: path.join(state.myideDir, "verify"),
+    });
+    state.lastVerify = report;
+    const summary = `Staged build completed with ${staged.files.length} file(s) across 4 stages.`;
+    opts.onEvent({ type: "done", summary, model: preferredLane.id });
     return summary;
   }
 
