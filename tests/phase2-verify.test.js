@@ -147,3 +147,4 @@ test("runSingleShotWebsite: builds in 1 call when clean, or repairs only failing
   assert.match(summary, /verified clean after 1 repair round/);
   assert.match(fs.readFileSync(path.join(ws, "index.html"), "utf8"), /<h1>Fixed Heading<\/h1>/);
 });
+

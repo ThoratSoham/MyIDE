@@ -12,6 +12,9 @@ import type {
   KeyStatus,
   KeyTestResult,
   LayoutState,
+  LocalModelsState,
+  LocalModelTestResult,
+  LocalProviderId,
   ModelConfigEntry,
   ModelsStateView,
   ProviderKeyId,
@@ -38,11 +41,14 @@ export interface MainApi {
   getLayout: () => LayoutState;
   setLayout: (partial: Partial<LayoutState>) => LayoutState;
 
-  // models (PART 1 #3)
+  // models (PART 1 #3 + PHASE 6)
   modelsGet: () => ModelsStateView;
   modelsSave: (models: ModelConfigEntry[]) => ModelsStateView;
   modelsUseSuggested: (provider: ProviderKeyId, oldModel: string, newModel: string) => ModelsStateView;
   modelsRefreshLive: () => Promise<ModelsStateView>;
+  localModelsGet: () => LocalModelsState;
+  localModelsDetect: () => Promise<LocalModelsState>;
+  localModelsTest: (provider: LocalProviderId, model?: string) => Promise<LocalModelTestResult>;
 
   // sessions (PART 2)
   sessionsList: () => { sessions: ChatSessionMeta[]; activeSessionId: string };
@@ -125,6 +131,11 @@ export function setupIpc(main: IpcMain, api: MainApi) {
     api.modelsUseSuggested(provider, oldModel, newModel),
   );
   handle("models:refreshLive", () => api.modelsRefreshLive());
+  handle("localModels:get", () => api.localModelsGet());
+  handle("localModels:detect", () => api.localModelsDetect());
+  handle("localModels:test", (provider: LocalProviderId, model?: string) =>
+    api.localModelsTest(provider, model),
+  );
 
   // sessions
   handle("sessions:list", () => api.sessionsList());

@@ -7,7 +7,9 @@ import {
   type LucideIcon,
   Monitor,
   Palette,
+  RefreshCw,
   RotateCcw,
+  Server,
   ShieldCheck,
   Sparkles,
   TerminalSquare,
@@ -18,6 +20,9 @@ import {
   type AiStatus,
   type KeyStatus,
   type KeyTestResult,
+  type LocalModelsState,
+  type LocalModelTestResult,
+  type LocalProviderId,
   type ProviderKeyId,
   type Settings,
 } from "../../shared/electron-api-types";
@@ -32,7 +37,7 @@ interface Props {
   onOpenModels?: () => void;
 }
 
-type SettingsTab = "keys" | "appearance" | "agent" | "terminal" | "quotas";
+type SettingsTab = "keys" | "local" | "appearance" | "agent" | "terminal" | "quotas";
 
 const FALLBACK: Settings = { ...DEFAULT_SETTINGS, theme: "system" };
 
@@ -42,6 +47,7 @@ const NAV_TABS: Array<{
   Icon: LucideIcon;
 }> = [
   { id: "keys", label: "Free-API Keys", Icon: KeyRound },
+  { id: "local", label: "Local Models", Icon: Server },
   { id: "appearance", label: "Appearance & Layout", Icon: Palette },
   { id: "agent", label: "Agent & Workflow", Icon: Sparkles },
   { id: "terminal", label: "Terminal & Browser", Icon: TerminalSquare },
@@ -55,6 +61,9 @@ export function SettingsPanel({ settings, onChange, onClose, onOpenModels }: Pro
   const [tab, setTab] = useState<SettingsTab>("keys");
   const [keys, setKeys] = useState<KeyStatus[]>([]);
   const [ai, setAi] = useState<AiStatus | null>(null);
+  const [localState, setLocalState] = useState<LocalModelsState | null>(null);
+  const [localTest, setLocalTest] = useState<Partial<Record<LocalProviderId, LocalModelTestResult>>>({});
+  const [localBusy, setLocalBusy] = useState(false);
   const [drafts, setDrafts] = useState<Partial<Record<ProviderKeyId, string>>>({});
   const [results, setResults] = useState<KeyTestResult[] | null>(null);
   const [busy, setBusy] = useState(false);
@@ -62,12 +71,14 @@ export function SettingsPanel({ settings, onChange, onClose, onOpenModels }: Pro
 
   const refresh = useCallback(async () => {
     try {
-      const [status, aiStatus] = await Promise.all([
+      const [status, aiStatus, localInfo] = await Promise.all([
         window.electron.keys.status(),
         window.electron.ai.status(),
+        window.electron.localModels ? window.electron.localModels.get() : Promise.resolve(null),
       ]);
       setKeys(status);
       setAi(aiStatus);
+      if (localInfo) setLocalState(localInfo);
       setError(null);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -130,6 +141,39 @@ export function SettingsPanel({ settings, onChange, onClose, onOpenModels }: Pro
 
   const testFor = (p: ProviderKeyId) => results?.find((r) => r.provider === p);
   const configuredCount = keys.filter((k) => k.configured).length;
+  const localModelCount = localState?.models.length ?? 0;
+
+  const detectLocal = async () => {
+    if (!window.electron.localModels) return;
+    setLocalBusy(true);
+    setError(null);
+    try {
+      const detected = await window.electron.localModels.detect();
+      setLocalState(detected);
+      const aiStatus = await window.electron.ai.status();
+      setAi(aiStatus);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setLocalBusy(false);
+    }
+  };
+
+  const runLocalTest = async (provider: LocalProviderId, model?: string) => {
+    if (!window.electron.localModels) return;
+    setLocalBusy(true);
+    setError(null);
+    try {
+      const res = await window.electron.localModels.test(provider, model);
+      setLocalTest((prev) => ({ ...prev, [provider]: res }));
+      const detected = await window.electron.localModels.get();
+      setLocalState(detected);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setLocalBusy(false);
+    }
+  };
 
   return (
     <div
@@ -148,8 +192,9 @@ export function SettingsPanel({ settings, onChange, onClose, onOpenModels }: Pro
           <div className="flex items-center gap-2.5">
             <NovaLogoMark size={18} />
             <h2 className="text-sm font-semibold text-[var(--nova-text-primary)]">Nova IDE Settings</h2>
-            <Badge tone={configuredCount > 0 ? "success" : "warning"}>
-              {configuredCount} {configuredCount === 1 ? "key" : "keys"} active
+            <Badge tone={configuredCount > 0 || localModelCount > 0 ? "success" : "warning"}>
+              {configuredCount} {configuredCount === 1 ? "key" : "keys"}
+              {localModelCount > 0 ? ` + ${localModelCount} local` : ""}
             </Badge>
           </div>
           <div className="flex items-center gap-2">
@@ -179,11 +224,10 @@ export function SettingsPanel({ settings, onChange, onClose, onOpenModels }: Pro
                     key={id}
                     type="button"
                     onClick={() => setTab(id)}
-                    className={`flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-xs ${
-                      active
-                        ? "bg-[var(--nova-accent-soft)] font-medium text-[var(--nova-accent-bright)]"
-                        : "text-[var(--nova-text-secondary)] hover:bg-[var(--nova-bg-hover)] hover:text-[var(--nova-text-primary)]"
-                    }`}
+                    className={`flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-xs ${active
+                      ? "bg-[var(--nova-accent-soft)] font-medium text-[var(--nova-accent-bright)]"
+                      : "text-[var(--nova-text-secondary)] hover:bg-[var(--nova-bg-hover)] hover:text-[var(--nova-text-primary)]"
+                      }`}
                   >
                     <Icon size={14} />
                     <span>{label}</span>
@@ -266,10 +310,222 @@ export function SettingsPanel({ settings, onChange, onClose, onOpenModels }: Pro
 
                 {ai?.offline && (
                   <div className="rounded-lg border border-[var(--nova-warning)]/40 bg-[var(--nova-warning-soft)] p-3 text-[11.5px] text-[var(--nova-warning)]">
-                    No cloud API key is configured yet. Runs will fall back to the local offline starter pack until you
-                    add a free Gemini, Groq, or OpenRouter key (or connect local Ollama in Milestone 3).
+                    No cloud API key or running local model detected yet. Runs will fall back to the local offline
+                    starter pack until you add a free Gemini, Groq, or OpenRouter key or connect Ollama / LM Studio in
+                    the Local Models tab.
                   </div>
                 )}
+              </div>
+            )}
+
+            {tab === "local" && (
+              <div className="space-y-4">
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <h3 className="text-sm font-semibold text-[var(--nova-text-primary)]">
+                      Local Models (Ollama &amp; LM Studio)
+                    </h3>
+                    <p className="mt-1 leading-relaxed text-[var(--nova-text-muted)]">
+                      Unlimited zero-quota lanes on your machine. Used automatically for intent classification,
+                      summaries, history compression, Q&amp;A, and capable simple edits so cloud free-tier quota stays
+                      reserved for hard codegen and repair.
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => void detectLocal()}
+                    disabled={localBusy}
+                    className="flex flex-none items-center gap-1.5 rounded-lg bg-[var(--nova-accent)] px-3 py-1.5 text-xs font-medium text-white hover:bg-[var(--nova-accent-hover)] disabled:opacity-40"
+                  >
+                    <RefreshCw size={12} className={localBusy ? "animate-spin" : ""} />
+                    <span>{localBusy ? "Detecting…" : "Detect Servers"}</span>
+                  </button>
+                </div>
+
+                <label className="flex items-start gap-2.5 rounded-lg border border-[var(--nova-border-subtle)] bg-[var(--nova-bg-surface)] p-3">
+                  <input
+                    type="checkbox"
+                    checked={s.localModelsEnabled !== false}
+                    onChange={(e) => onChange({ localModelsEnabled: e.target.checked })}
+                    className="mt-0.5"
+                  />
+                  <div>
+                    <div className="font-medium text-[var(--nova-text-primary)]">
+                      Enable local Ollama &amp; LM Studio lanes
+                    </div>
+                    <div className="text-[11px] text-[var(--nova-text-muted)]">
+                      Replaces the static offline starter pack when no cloud keys are set, and offloads light tasks
+                      when cloud keys are active.
+                    </div>
+                  </div>
+                </label>
+
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                  {/* Ollama Card */}
+                  <div className="space-y-2 rounded-lg border border-[var(--nova-border)] bg-[var(--nova-bg-surface)] p-3">
+                    <div className="flex items-center justify-between">
+                      <span className="font-medium text-[var(--nova-text-primary)]">Ollama</span>
+                      <Badge tone={localState?.ollamaOnline ? "success" : "neutral"}>
+                        {localState?.ollamaOnline ? "Online" : "Not running"}
+                      </Badge>
+                    </div>
+                    <input
+                      type="text"
+                      value={s.ollamaBaseUrl ?? "http://127.0.0.1:11434"}
+                      onChange={(e) => onChange({ ollamaBaseUrl: e.target.value })}
+                      placeholder="http://127.0.0.1:11434"
+                      className="w-full rounded-md border border-[var(--nova-border)] bg-[var(--nova-bg-app)] px-2.5 py-1.5 font-mono text-xs text-[var(--nova-text-primary)]"
+                    />
+                    <div className="flex items-center justify-between gap-2">
+                      <button
+                        type="button"
+                        onClick={() => void runLocalTest("ollama", s.selectedLocalModel || undefined)}
+                        disabled={localBusy}
+                        className="rounded-md border border-[var(--nova-border)] bg-[var(--nova-bg-panel)] px-2.5 py-1 text-xs text-[var(--nova-text-primary)] hover:bg-[var(--nova-bg-hover)] disabled:opacity-40"
+                      >
+                        Test Ollama
+                      </button>
+                      {localTest.ollama && (
+                        <span
+                          className={`truncate text-[11px] ${
+                            localTest.ollama.ok ? "text-[var(--nova-success)]" : "text-[var(--nova-danger)]"
+                          }`}
+                          title={localTest.ollama.message}
+                        >
+                          {localTest.ollama.ok ? "✓ " : "✗ "}
+                          {localTest.ollama.message}
+                        </span>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* LM Studio Card */}
+                  <div className="space-y-2 rounded-lg border border-[var(--nova-border)] bg-[var(--nova-bg-surface)] p-3">
+                    <div className="flex items-center justify-between">
+                      <span className="font-medium text-[var(--nova-text-primary)]">LM Studio</span>
+                      <Badge tone={localState?.lmStudioOnline ? "success" : "neutral"}>
+                        {localState?.lmStudioOnline ? "Online" : "Not running"}
+                      </Badge>
+                    </div>
+                    <input
+                      type="text"
+                      value={s.lmStudioBaseUrl ?? "http://127.0.0.1:1234"}
+                      onChange={(e) => onChange({ lmStudioBaseUrl: e.target.value })}
+                      placeholder="http://127.0.0.1:1234"
+                      className="w-full rounded-md border border-[var(--nova-border)] bg-[var(--nova-bg-app)] px-2.5 py-1.5 font-mono text-xs text-[var(--nova-text-primary)]"
+                    />
+                    <div className="flex items-center justify-between gap-2">
+                      <button
+                        type="button"
+                        onClick={() => void runLocalTest("lmstudio", s.selectedLocalModel || undefined)}
+                        disabled={localBusy}
+                        className="rounded-md border border-[var(--nova-border)] bg-[var(--nova-bg-panel)] px-2.5 py-1 text-xs text-[var(--nova-text-primary)] hover:bg-[var(--nova-bg-hover)] disabled:opacity-40"
+                      >
+                        Test LM Studio
+                      </button>
+                      {localTest.lmstudio && (
+                        <span
+                          className={`truncate text-[11px] ${
+                            localTest.lmstudio.ok ? "text-[var(--nova-success)]" : "text-[var(--nova-danger)]"
+                          }`}
+                          title={localTest.lmstudio.message}
+                        >
+                          {localTest.lmstudio.ok ? "✓ " : "✗ "}
+                          {localTest.lmstudio.message}
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                </div>
+
+                {/* Installed Local Models */}
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between">
+                    <h4 className="font-semibold text-[var(--nova-text-primary)]">
+                      Detected Local Models ({localState?.models.length ?? 0})
+                    </h4>
+                    {(localState?.models.length ?? 0) > 0 && (
+                      <select
+                        value={s.selectedLocalModel ?? ""}
+                        onChange={(e) => onChange({ selectedLocalModel: e.target.value })}
+                        className="rounded-md border border-[var(--nova-border)] bg-[var(--nova-bg-app)] px-2 py-1 text-xs text-[var(--nova-text-primary)]"
+                      >
+                        <option value="">Auto-select best local model</option>
+                        {localState?.models.map((m) => (
+                          <option key={`${m.provider}:${m.id}`} value={`${m.provider}:${m.id}`}>
+                            {m.provider}: {m.id}
+                          </option>
+                        ))}
+                      </select>
+                    )}
+                  </div>
+
+                  {!localState || localState.models.length === 0 ? (
+                    <div className="rounded-lg border border-dashed border-[var(--nova-border)] p-3 text-[11.5px] text-[var(--nova-text-muted)]">
+                      No running local models detected yet. Start Ollama (<code className="font-mono">ollama serve</code>)
+                      or LM Studio&apos;s Local Server, then click <strong>Detect Servers</strong>.
+                    </div>
+                  ) : (
+                    <div className="space-y-1.5">
+                      {localState.models.map((m) => {
+                        const fullId = `${m.provider}:${m.id}`;
+                        const preferred = s.selectedLocalModel === fullId || s.selectedLocalModel === m.id;
+                        return (
+                          <div
+                            key={fullId}
+                            className="flex items-center justify-between rounded-lg border border-[var(--nova-border-subtle)] bg-[var(--nova-bg-surface)] px-3 py-2"
+                          >
+                            <div className="flex items-center gap-2">
+                              <span className="font-mono font-medium text-[var(--nova-text-primary)]">{m.id}</span>
+                              <Badge tone="neutral">{m.provider}</Badge>
+                              <Badge tone={m.capableForEdits ? "success" : "warning"}>
+                                {m.capableForEdits ? "Coder / Edits" : "Classify & Chat"}
+                              </Badge>
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() => onChange({ selectedLocalModel: preferred ? "" : fullId })}
+                              className={`rounded-md px-2.5 py-1 text-[11px] ${
+                                preferred
+                                  ? "bg-[var(--nova-accent-soft)] font-medium text-[var(--nova-accent-bright)]"
+                                  : "border border-[var(--nova-border)] bg-[var(--nova-bg-panel)] text-[var(--nova-text-secondary)] hover:text-[var(--nova-text-primary)]"
+                              }`}
+                            >
+                              {preferred ? "Preferred ✓" : "Use first"}
+                            </button>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+
+                {/* Recommended Models Hint List (Never Auto-Downloads) */}
+                <div className="border-t border-[var(--nova-border-subtle)] pt-3">
+                  <h4 className="font-semibold text-[var(--nova-text-primary)]">
+                    Recommended Small Coder Models (Manual Install Only)
+                  </h4>
+                  <p className="mt-0.5 text-[11px] text-[var(--nova-text-muted)]">
+                    Nova IDE never downloads models automatically. Run <code className="font-mono">ollama pull &lt;model&gt;</code> in your terminal if you want a local lane:
+                  </p>
+                  <div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-2">
+                    {(localState?.recommended ?? []).map((rec) => (
+                      <div
+                        key={rec.id}
+                        className="rounded-lg border border-[var(--nova-border-subtle)] bg-[var(--nova-bg-surface)] p-2.5"
+                      >
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="font-medium text-[var(--nova-text-primary)]">{rec.label}</span>
+                          <span className="text-[10px] text-[var(--nova-text-muted)]">{rec.vramHint}</span>
+                        </div>
+                        <div className="mt-1 font-mono text-[11px] text-[var(--nova-accent-bright)]">
+                          ollama pull {rec.id}
+                        </div>
+                        <div className="mt-1 text-[11px] text-[var(--nova-text-muted)]">{rec.description}</div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
               </div>
             )}
 
@@ -288,11 +544,10 @@ export function SettingsPanel({ settings, onChange, onClose, onOpenModels }: Pro
                           key={t}
                           type="button"
                           onClick={() => onChange({ theme: t })}
-                          className={`flex items-center justify-between rounded-lg border px-3 py-2.5 capitalize ${
-                            active
-                              ? "border-[var(--nova-accent-bright)] bg-[var(--nova-accent-soft)] font-medium text-[var(--nova-text-primary)]"
-                              : "border-[var(--nova-border)] bg-[var(--nova-bg-surface)] text-[var(--nova-text-secondary)] hover:bg-[var(--nova-bg-hover)]"
-                          }`}
+                          className={`flex items-center justify-between rounded-lg border px-3 py-2.5 capitalize ${active
+                            ? "border-[var(--nova-accent-bright)] bg-[var(--nova-accent-soft)] font-medium text-[var(--nova-text-primary)]"
+                            : "border-[var(--nova-border)] bg-[var(--nova-bg-surface)] text-[var(--nova-text-secondary)] hover:bg-[var(--nova-bg-hover)]"
+                            }`}
                         >
                           <span className="flex items-center gap-2">
                             <Monitor size={13} />
@@ -535,9 +790,8 @@ function KeyRow({
         </Badge>
         {test && (
           <span
-            className={`max-w-[230px] truncate text-[11px] ${
-              test.ok ? "text-[var(--nova-success)]" : "text-[var(--nova-danger)]"
-            }`}
+            className={`max-w-[230px] truncate text-[11px] ${test.ok ? "text-[var(--nova-success)]" : "text-[var(--nova-danger)]"
+              }`}
             title={test.message}
           >
             {test.ok ? "✓ " : "✗ "}

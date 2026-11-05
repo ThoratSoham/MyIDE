@@ -630,3 +630,4 @@ export function extractSymbolsFromText(filePath: string, text: string): Extracte
 
   return out;
 }
+

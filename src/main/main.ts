@@ -137,6 +137,7 @@ const api: MainApi = {
   getSettings: () => publicSettings(),
   setSettings: (s: Partial<Settings>) => {
     persistSettings(s);
+    ai.onSettingsChanged();
     return publicSettings();
   },
 
@@ -147,6 +148,9 @@ const api: MainApi = {
   modelsSave: (models) => ai.updateModels(models),
   modelsUseSuggested: (provider, oldModel, newModel) => ai.useSuggestedModel(provider, oldModel, newModel),
   modelsRefreshLive: () => ai.syncLiveModels(true),
+  localModelsGet: () => ai.localModelsState(),
+  localModelsDetect: () => ai.detectLocalModels(),
+  localModelsTest: (provider, model) => ai.testLocalModel(provider, model),
 
   sessionsList: () => jobs?.listSessions() ?? { sessions: [], activeSessionId: "" },
   sessionsSwitch: (sessionId) => mustJobs().switchSession(sessionId),

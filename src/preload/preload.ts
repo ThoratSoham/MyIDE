@@ -4,6 +4,7 @@ import type {
   ChatEvent,
   ElectronApi,
   LayoutState,
+  LocalProviderId,
   ModelConfigEntry,
   ProviderKeyId,
   Settings,
@@ -45,6 +46,12 @@ const api: ElectronApi = {
     useSuggested: (provider: ProviderKeyId, oldModel: string, newModel: string) =>
       ipcRenderer.invoke("models:useSuggested", provider, oldModel, newModel),
     refreshLive: () => ipcRenderer.invoke("models:refreshLive"),
+  },
+  localModels: {
+    get: () => ipcRenderer.invoke("localModels:get"),
+    detect: () => ipcRenderer.invoke("localModels:detect"),
+    test: (provider: LocalProviderId, model?: string) =>
+      ipcRenderer.invoke("localModels:test", provider, model),
   },
   sessions: {
     list: () => ipcRenderer.invoke("sessions:list"),

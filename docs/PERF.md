@@ -124,3 +124,18 @@ This document records measured model calls, token budgets, tool executions, and 
 | 4. Rename across files | 2 (-82% vs P0) | 3,259 | 352 | 3,611 | 5 | 0 |
 | 5. Explain a file | 1 (-67% vs P0) | 1,263 | 85 | 1,348 | 0 | 0 |
 | **TOTAL (5 tasks)** | **8 (-75.8% vs P0)** | **10,558** | **1,921** | **12,479 (-72.3% vs P0)** | **15** | **0** |
+
+---
+
+## Phase 6 — Local Model Adapter (`src/main/ai/local-providers.ts`, `SettingsPanel.tsx`)
+
+**Changes:**
+- **OpenAI-compatible Ollama & LM Studio adapter (`src/main/ai/local-providers.ts`)**: Auto-detects running local servers (`http://127.0.0.1:11434/api/tags` & `http://127.0.0.1:1234/v1/models`), filters out embedding-only models (`nomic-embed-text`, `bge-*`, `all-minilm`), and registers unlimited zero-quota lanes (`rpm: Infinity, rpd: Infinity`).
+- **Zero-cloud-burn utility & simple-edit routing (`src/main/ai/service.ts`)**: Routes `classify`, `summarize`, `autocomplete`, `chat`, and capable `plan`/`general` tasks to local lanes first (`0` cloud free-tier RPD/TPM spent), while keeping cloud lanes primary for hard `codegen` and `repair` calls with local coder lanes as an unlimited safety fallback.
+- **Offline starter pack replacement**: When no cloud API keys are configured, detected local models automatically replace the static offline starter pack, keeping the starter pack only as the last-resort fallback when nothing else is reachable.
+- **Settings UI (`SettingsPanel.tsx`)**: Added **Local Models** tab with server URL inputs, **Detect Servers**, **Test Ollama / LM Studio**, preferred model selection, and a manual-install recommended small coder model hint list (never auto-downloads).
+
+| Task | Model Calls | Input Tokens | Output Tokens | Total Tokens | Tool Calls | Failed Edits |
+| :--- | ---: | ---: | ---: | ---: | ---: | ---: |
+| 5-task suite (cloud mock) | **8 (-75.8% vs P0)** | **10,558** | **1,921** | **12,479 (-72.3% vs P0)** | **15** | **0** |
+| Cloud calls when local coder active | **0–6 (up to -100% cloud RPD on utility/explain/simple edits)** | — | — | — | — | **0** |

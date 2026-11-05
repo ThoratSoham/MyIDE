@@ -28,6 +28,7 @@ export interface Settings {
   localModelsEnabled?: boolean;
   ollamaBaseUrl?: string;
   lmStudioBaseUrl?: string;
+  selectedLocalModel?: string;
   // PHASE 8: optional offscreen BrowserWindow website verification.
   headlessBrowserVerify?: boolean;
   providerOverrides: {
@@ -55,6 +56,7 @@ export const DEFAULT_SETTINGS: Settings = {
   localModelsEnabled: true,
   ollamaBaseUrl: "http://127.0.0.1:11434",
   lmStudioBaseUrl: "http://127.0.0.1:1234",
+  selectedLocalModel: "",
   headlessBrowserVerify: false,
   providerOverrides: {
     geminiApiKeyLast4: "",
@@ -70,7 +72,43 @@ export interface FsEntry {
 }
 
 export type ProviderKeyId = "gemini" | "openrouter" | "groq";
+export type LocalProviderId = "ollama" | "lmstudio";
 export type CostTier = "free" | "low" | "medium" | "high";
+
+export interface LocalModelInfo {
+  id: string;
+  provider: LocalProviderId;
+  sizeBytes?: number;
+  family?: string;
+  capableForEdits: boolean;
+}
+
+export interface LocalRecommendedModel {
+  id: string;
+  label: string;
+  vramHint: string;
+  description: string;
+}
+
+export interface LocalModelsState {
+  enabled: boolean;
+  ollamaUrl: string;
+  ollamaOnline: boolean;
+  lmStudioUrl: string;
+  lmStudioOnline: boolean;
+  selectedModel: string;
+  models: LocalModelInfo[];
+  recommended: LocalRecommendedModel[];
+  checkedAt: number;
+}
+
+export interface LocalModelTestResult {
+  provider: LocalProviderId;
+  model: string;
+  ok: boolean;
+  latencyMs: number;
+  message: string;
+}
 export type JobMode = "fast" | "balanced" | "best";
 export type JobKind = "website" | "agent";
 export type ApprovalDecision = "once" | "always" | "deny";
@@ -469,6 +507,11 @@ export interface ElectronApi {
     save: (models: ModelConfigEntry[]) => Promise<ModelsStateView>;
     useSuggested: (provider: ProviderKeyId, oldModel: string, newModel: string) => Promise<ModelsStateView>;
     refreshLive: () => Promise<ModelsStateView>;
+  };
+  localModels: {
+    get: () => Promise<LocalModelsState>;
+    detect: () => Promise<LocalModelsState>;
+    test: (provider: LocalProviderId, model?: string) => Promise<LocalModelTestResult>;
   };
   sessions: {
     list: () => Promise<{ sessions: ChatSessionMeta[]; activeSessionId: string }>;

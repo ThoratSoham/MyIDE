@@ -42,7 +42,7 @@ export interface LaneLimits {
   resetHourUtc: number; // hour of day (UTC) when the daily budget resets, 0-23
 }
 
-export type ProviderId = "gemini" | "openrouter" | "groq" | "offline";
+export type ProviderId = "gemini" | "openrouter" | "groq" | "ollama" | "lmstudio" | "offline";
 
 export interface ProviderConfig {
   id: ProviderId;

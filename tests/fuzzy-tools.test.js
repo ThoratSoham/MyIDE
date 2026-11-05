@@ -187,3 +187,4 @@ test("replaceLines, readFile (>200 outline & ranges), grep (.env safe), listTree
   assert.equal(replRes.ok, true);
   assert.match(fs.readFileSync(path.join(ws, "src/big.ts"), "utf8"), /UPDATED_NEEDLE/);
 });
+

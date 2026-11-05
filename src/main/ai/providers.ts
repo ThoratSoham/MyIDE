@@ -1,4 +1,4 @@
-import type { ModelConfigEntry } from "../../shared/electron-api-types";
+import type { LocalModelInfo, ModelConfigEntry } from "../../shared/electron-api-types";
 import type { ProviderId, ProviderConfig, Lane, LaneLimits, LaneHealth, TaskClass } from "./types";
 import { GROQ_MAX_REQUEST_TOKENS } from "./types";
 import { DEFAULT_MODEL_ENTRIES } from "./model-settings";
@@ -30,6 +30,20 @@ export const PROVIDER_CONFIGS: Record<ProviderId, ProviderConfig> = {
     label: "Groq",
     models: ["openai/gpt-oss-120b", "qwen/qwen3.8-27b", "openai/gpt-oss-20b"],
     fallbackModels: ["openai/gpt-oss-20b"],
+    defaultRole: "general",
+  },
+  ollama: {
+    id: "ollama",
+    label: "Ollama (Local)",
+    models: [],
+    fallbackModels: [],
+    defaultRole: "general",
+  },
+  lmstudio: {
+    id: "lmstudio",
+    label: "LM Studio (Local)",
+    models: [],
+    fallbackModels: [],
     defaultRole: "general",
   },
   // Only used when no real key is configured.
@@ -68,6 +82,16 @@ export function defaultLaneLimits(provider: ProviderId, maxTokens?: number): Lan
         rpd: Infinity,
         tpm: 12000,
         maxTokensPerRequest: Math.min(maxTokens ?? GROQ_MAX_REQUEST_TOKENS, GROQ_MAX_REQUEST_TOKENS),
+        resetHourUtc: 0,
+      };
+    }
+    case "ollama":
+    case "lmstudio": {
+      return {
+        rpm: Infinity,
+        rpd: Infinity,
+        tpm: null,
+        maxTokensPerRequest: maxTokens ?? 16384,
         resetHourUtc: 0,
       };
     }
@@ -136,6 +160,45 @@ export function buildLanes(entries: ModelConfigEntry[] = DEFAULT_MODEL_ENTRIES):
     });
   }
 
+  return lanes;
+}
+
+/**
+ * PHASE 6: Build unlimited local lanes from detected Ollama / LM Studio models.
+ */
+export function buildLocalLanes(
+  localModels: LocalModelInfo[],
+  selectedLocalModel?: string,
+): Lane[] {
+  const lanes: Lane[] = [];
+  for (let i = 0; i < localModels.length; i++) {
+    const info = localModels[i];
+    const laneId = `${info.provider}:${info.id}`;
+    const isSelected =
+      Boolean(selectedLocalModel) &&
+      (selectedLocalModel === laneId || selectedLocalModel === info.id);
+
+    const taskClasses: TaskClass[] = info.capableForEdits
+      ? ["classify", "summarize", "autocomplete", "chat", "plan", "general", "codegen", "repair"]
+      : ["classify", "summarize", "autocomplete", "chat"];
+
+    lanes.push({
+      id: laneId,
+      provider: info.provider,
+      model: info.id,
+      role: info.capableForEdits ? "reasoning" : "general",
+      priority: isSelected ? 8 : info.capableForEdits ? 25 + i : 40 + i,
+      maxTokens: 16384,
+      costTier: "free",
+      taskClasses,
+      capabilities: {
+        supportsJsonMode: true,
+        supportsResponseSchema: false,
+        supportsNativeTools: false,
+      },
+      limits: defaultLaneLimits(info.provider, 16384),
+    });
+  }
   return lanes;
 }
 

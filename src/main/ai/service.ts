@@ -3,6 +3,9 @@ import log from "electron-log";
 import type {
   DroppedModelInfo,
   LaneExhaustedDetail,
+  LocalModelsState,
+  LocalModelTestResult,
+  LocalProviderId,
   ModelConfigEntry,
   ModelsStateView,
   ProviderKeyId,
@@ -16,10 +19,18 @@ import type {
   RouterLaneEvent,
   TaskClass,
 } from "./types";
-import { buildLanes, defaultLaneLimits, PROVIDER_CONFIGS } from "./providers";
+import { buildLanes, buildLocalLanes, defaultLaneLimits, PROVIDER_CONFIGS } from "./providers";
 import { Ledger, nextResetMs } from "./ledger";
 import { Router, abortableSleep, formatLocalTime, type SendResult } from "./router";
 import { makeRealProviders, discoverLimitsFromHeaders } from "./real-providers";
+import {
+  detectLocalModels,
+  makeLocalProviders,
+  normalizeLmStudioV1Url,
+  normalizeOllamaRootUrl,
+  RECOMMENDED_LOCAL_CODER_MODELS,
+  testLocalModel,
+} from "./local-providers";
 import { makeOfflineProvider } from "./offline-provider";
 import {
   filterExistingModels,
@@ -31,7 +42,7 @@ import {
 } from "./model-settings";
 import { ProviderConcurrencyLimiter, RequestDeduplicator } from "./concurrency";
 import { StreamCancelledError } from "./http";
-import { getLimitOverrides, getProviderKey } from "../store";
+import { getLimitOverrides, getProviderKey, getSettings } from "../store";
 
 const PAUSE_THRESHOLD_MS = 10 * 60_000;
 const MAX_WAIT_ROUNDS = 2;
@@ -77,6 +88,17 @@ export class AIService {
   private router!: Router;
   private retries = new Map<string, number>();
   private realKeysPresent = false;
+  private localState: LocalModelsState = {
+    enabled: true,
+    ollamaUrl: "http://127.0.0.1:11434",
+    ollamaOnline: false,
+    lmStudioUrl: "http://127.0.0.1:1234/v1",
+    lmStudioOnline: false,
+    selectedModel: "",
+    models: [],
+    recommended: RECOMMENDED_LOCAL_CODER_MODELS,
+    checkedAt: 0,
+  };
   // Concurrency limited to 2 in-flight requests per provider; excess queued FIFO.
   private concurrency = new ProviderConcurrencyLimiter(2);
   // Identical concurrent requests share one upstream flight.
@@ -95,6 +117,14 @@ export class AIService {
   onLaneEvent?: (event: RouterLaneEvent) => void;
 
   init(opts?: { skipLiveFetch?: boolean }): void {
+    const s = getSettings();
+    this.localState = {
+      ...this.localState,
+      enabled: s.localModelsEnabled !== false,
+      ollamaUrl: normalizeOllamaRootUrl(s.ollamaBaseUrl),
+      lmStudioUrl: normalizeLmStudioV1Url(s.lmStudioBaseUrl),
+      selectedModel: s.selectedLocalModel ?? "",
+    };
     this.configuredEntries = loadModelSettings();
     const filtered = filterExistingModels(this.configuredEntries, this.liveCatalogs);
     this.activeEntries = filtered.active;
@@ -104,11 +134,25 @@ export class AIService {
 
     if (!opts?.skipLiveFetch && process.env.MYIDE_SMOKE !== "1") {
       void this.syncLiveModels(false);
+      void this.detectLocalModels();
     }
   }
 
+  private hasActiveLocalLanes(): boolean {
+    return getSettings().localModelsEnabled !== false && this.localState.models.length > 0;
+  }
+
   private rebuildLanes(): void {
-    this.lanes = buildLanes(this.activeEntries);
+    const s = getSettings();
+    const baseLanes = buildLanes(this.activeEntries);
+    const cloudLanes = baseLanes.filter((l) => l.provider !== "offline");
+    const offlineLanes = baseLanes.filter((l) => l.provider === "offline");
+    const localLanes =
+      s.localModelsEnabled !== false && this.localState.models.length > 0
+        ? buildLocalLanes(this.localState.models, s.selectedLocalModel)
+        : [];
+
+    this.lanes = [...cloudLanes, ...localLanes, ...offlineLanes];
 
     const overrides = getLimitOverrides();
     for (const lane of this.lanes) {
@@ -121,6 +165,16 @@ export class AIService {
 
     this.ledger.load(this.lanes);
     this.adapters = makeRealProviders();
+    const localAdapters = makeLocalProviders({
+      getOllamaUrl: () => getSettings().ollamaBaseUrl ?? "http://127.0.0.1:11434",
+      getLmStudioUrl: () => getSettings().lmStudioBaseUrl ?? "http://127.0.0.1:1234",
+      isProviderOnline: (provider) =>
+        getSettings().localModelsEnabled !== false &&
+        (provider === "ollama" ? this.localState.ollamaOnline : this.localState.lmStudioOnline),
+    });
+    for (const [k, adapter] of localAdapters.entries()) {
+      this.adapters.set(k, adapter);
+    }
     this.adapters.set("offline", makeOfflineProvider());
 
     this.realKeysPresent = (["gemini", "openrouter", "groq"] as ProviderId[]).some((p) =>
@@ -129,8 +183,16 @@ export class AIService {
 
     this.router = new Router({
       getLanes: (role) => this.lanesForRole(role),
-      isProviderConfigured: (providerId) =>
-        providerId === "offline" ? true : !!getProviderKey(providerId as ProviderKeyId),
+      isProviderConfigured: (providerId) => {
+        if (providerId === "offline") return true;
+        if (providerId === "ollama") {
+          return getSettings().localModelsEnabled !== false && this.localState.ollamaOnline;
+        }
+        if (providerId === "lmstudio") {
+          return getSettings().localModelsEnabled !== false && this.localState.lmStudioOnline;
+        }
+        return !!getProviderKey(providerId as ProviderKeyId);
+      },
       healthFor: (laneId) => {
         const lane = this.lanes.find((l) => l.id === laneId);
         return lane ? this.ledger.healthFor(lane) : undefined;
@@ -154,21 +216,53 @@ export class AIService {
   }
 
   private lanesForRole(role: TaskClass): Lane[] {
-    if (!this.realKeysPresent) {
-      const mappedOfflineRole =
-        role === "autocomplete" || role === "classify"
-          ? "autocomplete"
-          : role === "chat" || role === "summarize"
-          ? "general"
-          : "reasoning";
-      const offlineMatch = this.lanes.filter((l) => l.provider === "offline" && l.role === mappedOfflineRole);
-      return offlineMatch.length > 0 ? offlineMatch : this.lanes.filter((l) => l.provider === "offline");
+    const mappedOfflineRole =
+      role === "autocomplete" || role === "classify"
+        ? "autocomplete"
+        : role === "chat" || role === "summarize"
+        ? "general"
+        : "reasoning";
+    const offlineFallback = () => {
+      const m = this.lanes.filter((l) => l.provider === "offline" && l.role === mappedOfflineRole);
+      return m.length > 0 ? m : this.lanes.filter((l) => l.provider === "offline");
+    };
+
+    const hasLocal = this.hasActiveLocalLanes();
+    if (!this.realKeysPresent && !hasLocal) {
+      return offlineFallback();
     }
+
+    const isLocal = (l: Lane) => l.provider === "ollama" || l.provider === "lmstudio";
+
+    // PHASE 6: When no cloud keys exist, detected local models replace the static offline starter pack,
+    // keeping the starter pack at the tail ONLY when nothing else works!
+    if (!this.realKeysPresent && hasLocal) {
+      const localOnly = this.lanes
+        .filter(isLocal)
+        .sort((a, b) => {
+          const aScore = (a.priority ?? 30) + this.ledger.qualityScorePenalty(a.id);
+          const bScore = (b.priority ?? 30) + this.ledger.qualityScorePenalty(b.id);
+          return aScore - bScore;
+        });
+      return [...localOnly, ...offlineFallback()];
+    }
+
     const realLanes = this.lanes.filter((l) => l.provider !== "offline");
     const isLightTask =
       role === "autocomplete" || role === "classify" || role === "summarize" || role === "chat";
+    const isSimpleEditOrPlan = role === "plan" || role === "general";
 
     return [...realLanes].sort((a, b) => {
+      // PHASE 6: Route classify, summarize, history compression, chat, and capable simple edits to local
+      // lanes by default (0 cloud quota cost). Keep cloud lanes primary for hard codegen and repair!
+      const localAdjust = (l: Lane): number => {
+        if (!isLocal(l)) return 0;
+        if (isLightTask) return -45;
+        if (isSimpleEditOrPlan) return l.role === "reasoning" ? -25 : 25;
+        // Hard codegen / repair / reasoning -> cloud first, local coder as unlimited safety fallback
+        return l.role === "reasoning" ? 35 : 80;
+      };
+
       // 1. Explicit taskClasses match in models.json gets a boost for light tasks
       const aExplicit = a.taskClasses?.includes(role) ? -4 : 0;
       const bExplicit = b.taskClasses?.includes(role) ? -4 : 0;
@@ -182,14 +276,64 @@ export class AIService {
         l.model.includes("3b") ||
         l.model.includes("7b") ||
         l.model.includes("20b");
-      const aTier = isLightTask ? (isFastModel(a) ? -6 : 0) : 0;
-      const bTier = isLightTask ? (isFastModel(b) ? -6 : 0) : 0;
+      const aTier = isLightTask && !isLocal(a) ? (isFastModel(a) ? -6 : 0) : 0;
+      const bTier = isLightTask && !isLocal(b) ? (isFastModel(b) ? -6 : 0) : 0;
 
-      // 3. Combine user priority + dynamic rolling quality penalty (malformed JSON / error rate / latency)
-      const aScore = (a.priority ?? 50) + aExplicit + aTier + this.ledger.qualityScorePenalty(a.id);
-      const bScore = (b.priority ?? 50) + bExplicit + bTier + this.ledger.qualityScorePenalty(b.id);
+      // 3. Combine user priority + local routing policy + dynamic rolling quality penalty
+      const aScore =
+        (a.priority ?? 50) + localAdjust(a) + aExplicit + aTier + this.ledger.qualityScorePenalty(a.id);
+      const bScore =
+        (b.priority ?? 50) + localAdjust(b) + bExplicit + bTier + this.ledger.qualityScorePenalty(b.id);
       return aScore - bScore;
     });
+  }
+
+  localModelsState(): LocalModelsState {
+    const s = getSettings();
+    return {
+      ...this.localState,
+      enabled: s.localModelsEnabled !== false,
+      ollamaUrl: normalizeOllamaRootUrl(s.ollamaBaseUrl),
+      lmStudioUrl: normalizeLmStudioV1Url(s.lmStudioBaseUrl),
+      selectedModel: s.selectedLocalModel ?? "",
+      models: [...this.localState.models],
+      recommended: RECOMMENDED_LOCAL_CODER_MODELS,
+    };
+  }
+
+  async detectLocalModels(timeoutMs?: number): Promise<LocalModelsState> {
+    const s = getSettings();
+    this.localState = await detectLocalModels({
+      enabled: s.localModelsEnabled !== false,
+      ollamaUrl: s.ollamaBaseUrl,
+      lmStudioUrl: s.lmStudioBaseUrl,
+      selectedModel: s.selectedLocalModel,
+      timeoutMs,
+    });
+    this.rebuildLanes();
+    return this.localModelsState();
+  }
+
+  async testLocalModel(provider: LocalProviderId, model?: string): Promise<LocalModelTestResult> {
+    const s = getSettings();
+    const res = await testLocalModel(provider, model, {
+      ollamaUrl: s.ollamaBaseUrl,
+      lmStudioUrl: s.lmStudioBaseUrl,
+    });
+    await this.detectLocalModels();
+    return res;
+  }
+
+  onSettingsChanged(): void {
+    const s = getSettings();
+    this.localState = {
+      ...this.localState,
+      enabled: s.localModelsEnabled !== false,
+      ollamaUrl: normalizeOllamaRootUrl(s.ollamaBaseUrl),
+      lmStudioUrl: normalizeLmStudioV1Url(s.lmStudioBaseUrl),
+      selectedModel: s.selectedLocalModel ?? "",
+    };
+    this.rebuildLanes();
   }
 
   async syncLiveModels(force = false): Promise<ModelsStateView> {
@@ -279,7 +423,7 @@ export class AIService {
   }
 
   isOfflineMode(): boolean {
-    return !this.realKeysPresent;
+    return !this.realKeysPresent && !this.hasActiveLocalLanes();
   }
 
   providerLabels(): Record<ProviderId, string> {

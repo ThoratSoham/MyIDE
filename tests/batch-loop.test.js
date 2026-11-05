@@ -168,3 +168,4 @@ test("batch loop: preserves backward compatibility with legacy single-tool envel
   assert.equal(fs.readFileSync(path.join(ws, "legacy.txt"), "utf8"), "legacy-ok");
   assert.match(singleToolFeedback, /^<tool_result name="writeFile" ok="true">/);
 });
+
