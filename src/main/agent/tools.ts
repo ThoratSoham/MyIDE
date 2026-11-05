@@ -3,8 +3,17 @@ import path from "path";
 import { spawn } from "child_process";
 import log from "electron-log";
 import { verifyWebsite, type VerifyReport } from "../quality/verifier";
+import { getSettings } from "../store";
 import { currentTelemetry } from "../telemetry";
 import type { UserQuestionOption } from "../../shared/electron-api-types";
+import {
+  applyMultiEditsAtomically,
+  detectDominantEol,
+  extractSymbolsFromText,
+  formatNumberedLines,
+  fuzzyReplaceInText,
+  type MultiEditItem,
+} from "./fuzzy-edit";
 
 // FR-5.2: the agent tool set. Every tool runs in the main process. Paths stay
 // inside the workspace (FR-5.3), .env files can never be read, deletes go to
@@ -146,6 +155,14 @@ export function describeToolCall(name: string, args: any): string {
       return `Writing file ${p || ""}…`.trim();
     case "editFile":
       return `Editing file ${p || ""}…`.trim();
+    case "replaceLines":
+      return `Replacing lines ${args?.startLine ?? ""}-${args?.endLine ?? ""} in ${p || "file"}…`;
+    case "grep":
+      return `Searching workspace for "${String(args?.pattern ?? "").slice(0, 36)}"…`;
+    case "listTree":
+      return `Listing workspace tree ${p || "/"}…`;
+    case "getSymbols":
+      return `Extracting symbols from ${p || "file"}…`;
     case "listDir":
       return `Listing directory ${p || "/"}…`;
     case "deleteFile":
@@ -171,6 +188,91 @@ export function describeToolCall(name: string, args: any): string {
   }
 }
 
+const SKIP_DIRS = new Set(["node_modules", ".git", "dist", ".myide", "build", "coverage", ".next", ".cache"]);
+const BINARY_EXTS = new Set([
+  ".png", ".jpg", ".jpeg", ".gif", ".webp", ".ico", ".pdf", ".zip", ".gz",
+  ".tar", ".exe", ".dll", ".node", ".woff", ".woff2", ".ttf", ".eot", ".mp3", ".mp4",
+]);
+
+function loadGitignorePatterns(root: string): RegExp[] {
+  const giPath = path.join(root, ".gitignore");
+  if (!fs.existsSync(giPath)) return [];
+  try {
+    const raw = fs.readFileSync(giPath, "utf8");
+    const patterns: RegExp[] = [];
+    for (const rawLine of raw.split(/\r?\n/)) {
+      const line = rawLine.trim();
+      if (!line || line.startsWith("#") || line.startsWith("!")) continue;
+      const clean = line.replace(/^\/+/, "").replace(/\/+$/, "");
+      if (!clean) continue;
+      const escaped = clean
+        .replace(/[.+^${}()|[\]\\]/g, "\\$&")
+        .replace(/\*\*/g, ".*")
+        .replace(/\*/g, "[^/]*")
+        .replace(/\?/g, "[^/]");
+      patterns.push(new RegExp(`(?:^|/)${escaped}(?:/|$)`));
+    }
+    return patterns;
+  } catch {
+    return [];
+  }
+}
+
+function globToRegExp(glob: string): RegExp | null {
+  const clean = glob.trim().replace(/\\/g, "/");
+  if (!clean) return null;
+  const escaped = clean
+    .replace(/[.+^${}()|[\]\\]/g, "\\$&")
+    .replace(/\*\*/g, "§§")
+    .replace(/\*/g, "[^/]*")
+    .replace(/§§/g, ".*")
+    .replace(/\?/g, "[^/]");
+  return new RegExp(clean.includes("/") ? `^${escaped}$` : `(?:^|/)${escaped}$`, "i");
+}
+
+function walkWorkspaceFiles(root: string, subDirRel = "", maxFiles = 1500): string[] {
+  const startAbs = insideWorkspace(root, subDirRel);
+  if (!fs.existsSync(startAbs)) return [];
+  const ignorePatterns = loadGitignorePatterns(root);
+  const results: string[] = [];
+
+  const visit = (dirAbs: string) => {
+    if (results.length >= maxFiles) return;
+    let entries: fs.Dirent[];
+    try {
+      entries = fs.readdirSync(dirAbs, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    entries.sort((a, b) => a.name.localeCompare(b.name));
+    for (const entry of entries) {
+      if (results.length >= maxFiles) break;
+      if (SKIP_DIRS.has(entry.name)) continue;
+      const childAbs = path.join(dirAbs, entry.name);
+      if (isEnvFile(childAbs)) continue;
+      const rel = path.relative(root, childAbs).replace(/\\/g, "/");
+      if (ignorePatterns.some((re) => re.test(rel))) continue;
+      if (entry.isDirectory()) {
+        visit(childAbs);
+      } else if (entry.isFile()) {
+        const ext = path.extname(entry.name).toLowerCase();
+        if (!BINARY_EXTS.has(ext)) {
+          results.push(rel);
+        }
+      }
+    }
+  };
+
+  if (fs.statSync(startAbs).isFile()) {
+    if (!isEnvFile(startAbs)) {
+      results.push(path.relative(root, startAbs).replace(/\\/g, "/"));
+    }
+  } else {
+    visit(startAbs);
+  }
+  return results;
+}
+
 export const TOOLS: ToolSpec[] = [
   {
     name: "listDir",
@@ -187,16 +289,207 @@ export const TOOLS: ToolSpec[] = [
     },
   },
   {
-    name: "readFile",
-    description: "Read a text file from the workspace. .env files cannot be read.",
-    params: { path: { type: "string", description: "File path relative to the workspace root.", required: true } },
+    name: "listTree",
+    description: "Return a compact .gitignore-aware directory tree (excludes .env and node_modules).",
+    params: {
+      path: { type: "string", description: "Optional subdirectory relative to workspace root ('' = root)." },
+      depth: { type: "number", description: "Max recursion depth (default 3, max 6)." },
+    },
+    async run(args, ctx) {
+      const rel = String(args?.path ?? "");
+      const maxDepth = Math.max(1, Math.min(6, Number(args?.depth ?? 3) || 3));
+      const startAbs = insideWorkspace(ctx.state.workspaceRoot, rel);
+      if (!fs.existsSync(startAbs)) {
+        return { ok: false, output: `No such directory: ${rel || "/"}.` };
+      }
+      const ignorePatterns = loadGitignorePatterns(ctx.state.workspaceRoot);
+      const lines: string[] = [];
+      let omitted = 0;
+      const MAX_TREE_ENTRIES = 200;
+
+      const walk = (dirAbs: string, depth: number, prefix: string) => {
+        if (depth > maxDepth) return;
+        let entries: fs.Dirent[];
+        try {
+          entries = fs.readdirSync(dirAbs, { withFileTypes: true });
+        } catch {
+          return;
+        }
+        const filtered = entries
+          .filter((e) => !SKIP_DIRS.has(e.name) && !isEnvFile(e.name))
+          .filter((e) => {
+            const entryRel = path.relative(ctx.state.workspaceRoot, path.join(dirAbs, e.name)).replace(/\\/g, "/");
+            return !ignorePatterns.some((re) => re.test(entryRel));
+          })
+          .sort((a, b) => {
+            if (a.isDirectory() !== b.isDirectory()) return a.isDirectory() ? -1 : 1;
+            return a.name.localeCompare(b.name);
+          });
+
+        for (const entry of filtered) {
+          if (lines.length >= MAX_TREE_ENTRIES) {
+            omitted++;
+            continue;
+          }
+          const marker = entry.isDirectory() ? "/" : "";
+          lines.push(`${prefix}${entry.name}${marker}`);
+          if (entry.isDirectory() && depth < maxDepth) {
+            walk(path.join(dirAbs, entry.name), depth + 1, prefix + "  ");
+          }
+        }
+      };
+
+      walk(startAbs, 1, "");
+      if (omitted > 0) {
+        lines.push(`[truncated ${omitted} entries, pass path or smaller depth]`);
+      }
+      return { ok: true, output: lines.length > 0 ? lines.join("\n") : "(empty workspace)" };
+    },
+  },
+  {
+    name: "grep",
+    description: "Fast regex/text search across workspace files (.env and node_modules excluded). Returns file:line:text.",
+    params: {
+      pattern: { type: "string", description: "Regex or literal search string.", required: true },
+      glob: { type: "string", description: "Optional file filter glob (e.g. '*.ts' or 'src/**')." },
+      maxResults: { type: "number", description: "Max matching lines to return (default 60, max 200)." },
+    },
+    async run(args, ctx) {
+      const pattern = String(args?.pattern ?? "");
+      if (!pattern) return { ok: false, output: "grep requires a non-empty 'pattern'." };
+      const maxResults = Math.max(1, Math.min(200, Number(args?.maxResults ?? 60) || 60));
+      const globRe = args?.glob ? globToRegExp(String(args.glob)) : null;
+
+      let regex: RegExp;
+      try {
+        regex = new RegExp(pattern);
+      } catch {
+        const escaped = pattern.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+        regex = new RegExp(escaped, "i");
+      }
+
+      const files = walkWorkspaceFiles(ctx.state.workspaceRoot, "", 1500);
+      const hits: string[] = [];
+      let totalMatches = 0;
+
+      for (const rel of files) {
+        if (globRe && !globRe.test(rel)) continue;
+        const abs = path.join(ctx.state.workspaceRoot, rel);
+        let content: string;
+        try {
+          const st = fs.statSync(abs);
+          if (st.size > 512_000) continue;
+          content = fs.readFileSync(abs, "utf8");
+        } catch {
+          continue;
+        }
+        const lines = content.split(/\r?\n/);
+        for (let i = 0; i < lines.length; i++) {
+          regex.lastIndex = 0;
+          if (regex.test(lines[i])) {
+            totalMatches++;
+            if (hits.length < maxResults) {
+              const snippet = lines[i].length > 180 ? `${lines[i].slice(0, 177)}...` : lines[i];
+              hits.push(`${rel}:${i + 1}:${snippet}`);
+            }
+          }
+        }
+      }
+
+      if (hits.length === 0) {
+        return { ok: true, output: `No matches found for "${pattern}".` };
+      }
+      if (totalMatches > maxResults) {
+        hits.push(`[truncated ${totalMatches - maxResults} additional matches, refine pattern or glob]`);
+      }
+      return { ok: true, output: hits.join("\n"), data: { count: totalMatches } };
+    },
+  },
+  {
+    name: "getSymbols",
+    description: "List functions, classes, interfaces, types, and exports in a file with 1-based line numbers.",
+    params: {
+      path: { type: "string", description: "File path relative to the workspace root.", required: true },
+    },
     async run(args, ctx) {
       const rel = String(args?.path ?? "");
       const abs = insideWorkspace(ctx.state.workspaceRoot, rel);
       if (isEnvFile(abs)) return { ok: false, output: "Refused: .env files are never read (FR-5.3)." };
-      if (!fs.existsSync(abs)) return { ok: false, output: `No such file: ${rel}. Use listDir to check the path.` };
+      if (!fs.existsSync(abs)) return { ok: false, output: `No such file: ${rel}.` };
       const text = fs.readFileSync(abs, "utf8");
-      return { ok: true, output: clip(text), data: { hash: hashText(text), length: text.length } };
+      const symbols = extractSymbolsFromText(rel, text);
+      if (symbols.length === 0) {
+        return { ok: true, output: `No top-level symbols detected in ${rel} (${text.split(/\r?\n/).length} lines).` };
+      }
+      const formatted = symbols
+        .slice(0, 120)
+        .map((s) => `L${s.line}: ${s.exported ? "export " : ""}${s.kind} ${s.name}`)
+        .join("\n");
+      return { ok: true, output: formatted, data: { count: symbols.length } };
+    },
+  },
+  {
+    name: "readFile",
+    description:
+      "Read a text file from the workspace with 1-based line numbers. Supports startLine/endLine ranges; large files (>200 lines) show a symbol outline + first 150 lines unless a range is requested.",
+    params: {
+      path: { type: "string", description: "File path relative to the workspace root.", required: true },
+      startLine: { type: "number", description: "Optional 1-based inclusive start line." },
+      endLine: { type: "number", description: "Optional 1-based inclusive end line." },
+    },
+    async run(args, ctx) {
+      const rel = String(args?.path ?? "");
+      const abs = insideWorkspace(ctx.state.workspaceRoot, rel);
+      if (isEnvFile(abs)) return { ok: false, output: "Refused: .env files are never read (FR-5.3)." };
+      if (!fs.existsSync(abs)) return { ok: false, output: `No such file: ${rel}. Use listDir or listTree to check the path.` };
+      const text = fs.readFileSync(abs, "utf8");
+      const lines = text.split(/\r?\n/);
+      const totalLines = lines.length;
+
+      const hasRange = args?.startLine !== undefined || args?.endLine !== undefined;
+      if (hasRange) {
+        const start = Math.max(1, Math.min(totalLines, Number(args?.startLine ?? 1) || 1));
+        const end = Math.max(start, Math.min(totalLines, Number(args?.endLine ?? Math.min(totalLines, start + 199)) || totalLines));
+        const slice = lines.slice(start - 1, end);
+        const header = `[${rel}: lines ${start}-${end} of ${totalLines}]`;
+        const body = formatNumberedLines(slice, start);
+        const tail = end < totalLines ? `\n[truncated ${totalLines - end} remaining lines, use startLine/endLine]` : "";
+        return {
+          ok: true,
+          output: clip(`${header}\n${body}${tail}`),
+          data: { hash: hashText(text), length: text.length, totalLines, startLine: start, endLine: end },
+        };
+      }
+
+      if (totalLines > 200) {
+        const symbols = extractSymbolsFromText(rel, text);
+        const outline =
+          symbols.length > 0
+            ? `[Symbol Outline for ${rel} (${totalLines} lines)]\n` +
+              symbols
+                .slice(0, 35)
+                .map((s) => `  L${s.line}: ${s.exported ? "export " : ""}${s.kind} ${s.name}`)
+                .join("\n") +
+              "\n\n"
+            : `[${rel} (${totalLines} lines)]\n`;
+        const headLines = lines.slice(0, 150);
+        const omitted = totalLines - headLines.length;
+        const output =
+          outline +
+          formatNumberedLines(headLines, 1) +
+          `\n[truncated ${omitted} lines, use startLine/endLine]`;
+        return {
+          ok: true,
+          output: clip(output),
+          data: { hash: hashText(text), length: text.length, totalLines, truncatedLines: omitted },
+        };
+      }
+
+      return {
+        ok: true,
+        output: clip(formatNumberedLines(lines, 1)),
+        data: { hash: hashText(text), length: text.length, totalLines },
+      };
     },
   },
   {
@@ -230,36 +523,121 @@ export const TOOLS: ToolSpec[] = [
   },
   {
     name: "editFile",
-    description: "Replace an exact string inside an existing file. Fails if the search text is missing or ambiguous.",
+    description:
+      "Replace text in an existing file using { path, find, replace } or atomic multi-edit { path, edits: [{ find, replace }] }. Tolerates CRLF/LF and indentation differences when unique.",
     params: {
       path: { type: "string", description: "File path relative to the workspace root.", required: true },
-      find: { type: "string", description: "Exact text to replace.", required: true },
-      replace: { type: "string", description: "Replacement text.", required: true },
+      find: { type: "string", description: "Text block to replace (when performing a single edit)." },
+      replace: { type: "string", description: "Replacement text (when performing a single edit)." },
+      edits: { type: "array", description: "Optional atomic list of [{ find, replace }] edits in the same file." },
     },
     async run(args, ctx) {
       const rel = String(args?.path ?? "");
-      const find = String(args?.find ?? "");
-      const replace = String(args?.replace ?? "");
+      if (!rel) return { ok: false, output: "editFile requires a 'path'." };
       const abs = insideWorkspace(ctx.state.workspaceRoot, rel);
       if (isEnvFile(abs)) return { ok: false, output: "Refused: .env files are never edited (FR-5.3)." };
       if (!fs.existsSync(abs)) return { ok: false, output: `No such file: ${rel}. Read it first, then edit.` };
+
       const text = fs.readFileSync(abs, "utf8");
-      const first = text.indexOf(find);
-      if (first === -1) {
-        currentTelemetry()?.recordFailedEditFile();
-        return { ok: false, output: `The text to replace was not found in ${rel}. Read the file and copy the exact text.` };
+      const fuzzyEnabled = getSettings().fuzzyEditMatch !== false;
+
+      if (Array.isArray(args?.edits)) {
+        const items: MultiEditItem[] = args.edits.map((e: any) => ({
+          find: String(e?.find ?? ""),
+          replace: String(e?.replace ?? ""),
+        }));
+        const multiRes = applyMultiEditsAtomically(text, items, { fuzzyEnabled, filePath: rel });
+        if (!multiRes.ok || multiRes.updatedText === undefined) {
+          currentTelemetry()?.recordFailedEditFile();
+          return { ok: false, output: multiRes.error ?? `Multi-edit failed in ${rel}.` };
+        }
+        backupIfExists(ctx.state.workspaceRoot, abs, rel);
+        fs.writeFileSync(abs, multiRes.updatedText, "utf8");
+        const problem = verifyWrittenFile(abs);
+        if (problem) return { ok: false, output: `The edit did NOT succeed: ${problem}` };
+        recordChange(ctx.state, rel, "edited");
+        noteWrite(ctx.state, rel);
+        return {
+          ok: true,
+          output: `Edited ${rel} (${multiRes.appliedCount} atomic edits applied, tier ${multiRes.tier ?? 1}, ${fs.statSync(abs).size} bytes).`,
+          data: { tier: multiRes.tier ?? 1, editsApplied: multiRes.appliedCount },
+        };
       }
-      if (text.indexOf(find, first + find.length) !== -1) {
+
+      const find = String(args?.find ?? "");
+      const replace = String(args?.replace ?? "");
+      const res = fuzzyReplaceInText(text, find, replace, { fuzzyEnabled, filePath: rel });
+      if (!res.ok || res.updatedText === undefined) {
         currentTelemetry()?.recordFailedEditFile();
-        return { ok: false, output: `The text to replace appears more than once in ${rel}. Include more surrounding text.` };
+        return { ok: false, output: res.error ?? `The text to replace was not found in ${rel}.` };
       }
       backupIfExists(ctx.state.workspaceRoot, abs, rel);
-      fs.writeFileSync(abs, text.replace(find, replace), "utf8");
+      fs.writeFileSync(abs, res.updatedText, "utf8");
       const problem = verifyWrittenFile(abs);
       if (problem) return { ok: false, output: `The edit did NOT succeed: ${problem}` };
       recordChange(ctx.state, rel, "edited");
       noteWrite(ctx.state, rel);
-      return { ok: true, output: `Edited ${rel} (${fs.statSync(abs).size} bytes on disk, verified).` };
+      const tierNote = res.tier && res.tier > 1 ? `, fuzzy tier ${res.tier}` : "";
+      return {
+        ok: true,
+        output: `Edited ${rel} (${fs.statSync(abs).size} bytes on disk, verified${tierNote}).`,
+        data: { tier: res.tier ?? 1 },
+      };
+    },
+  },
+  {
+    name: "replaceLines",
+    description: "Replace 1-based inclusive line range [startLine..endLine] in an existing file with new content.",
+    params: {
+      path: { type: "string", description: "File path relative to the workspace root.", required: true },
+      startLine: { type: "number", description: "1-based start line (inclusive).", required: true },
+      endLine: { type: "number", description: "1-based end line (inclusive).", required: true },
+      content: { type: "string", description: "Replacement lines (without '  N| ' line-number prefixes).", required: true },
+    },
+    async run(args, ctx) {
+      const rel = String(args?.path ?? "");
+      if (!rel) return { ok: false, output: "replaceLines requires a 'path'." };
+      const abs = insideWorkspace(ctx.state.workspaceRoot, rel);
+      if (isEnvFile(abs)) return { ok: false, output: "Refused: .env files are never edited (FR-5.3)." };
+      if (!fs.existsSync(abs)) return { ok: false, output: `No such file: ${rel}.` };
+
+      const text = fs.readFileSync(abs, "utf8");
+      const eol = detectDominantEol(text);
+      const hadFinalNewline = /\r?\n$/.test(text);
+      const rawLines = text.split(/\r?\n/);
+      if (hadFinalNewline && rawLines.length > 1 && rawLines[rawLines.length - 1] === "") {
+        rawLines.pop();
+      }
+      const totalLines = rawLines.length;
+      const startLine = Number(args?.startLine);
+      const endLine = Number(args?.endLine);
+      if (!Number.isInteger(startLine) || !Number.isInteger(endLine) || startLine < 1 || endLine < startLine || endLine > totalLines) {
+        currentTelemetry()?.recordFailedEditFile();
+        return {
+          ok: false,
+          output: `Invalid line range ${startLine}-${endLine} for ${rel} (file has ${totalLines} lines, 1-based inclusive).`,
+        };
+      }
+
+      const replacementNormalized = String(args?.content ?? "").replace(/\r\n/g, "\n");
+      const replacementLines = replacementNormalized === "" ? [] : replacementNormalized.replace(/\n$/, "").split("\n");
+      const updatedLines = [
+        ...rawLines.slice(0, startLine - 1),
+        ...replacementLines,
+        ...rawLines.slice(endLine),
+      ];
+      const updatedText = updatedLines.join(eol) + (hadFinalNewline ? eol : "");
+
+      backupIfExists(ctx.state.workspaceRoot, abs, rel);
+      fs.writeFileSync(abs, updatedText, "utf8");
+      const problem = verifyWrittenFile(abs);
+      if (problem) return { ok: false, output: `replaceLines did NOT succeed: ${problem}` };
+      recordChange(ctx.state, rel, "edited");
+      noteWrite(ctx.state, rel);
+      return {
+        ok: true,
+        output: `Replaced lines ${startLine}-${endLine} in ${rel} (${fs.statSync(abs).size} bytes, verified).`,
+      };
     },
   },
   {

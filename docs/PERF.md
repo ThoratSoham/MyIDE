@@ -66,3 +66,22 @@ This document records measured model calls, token budgets, tool executions, and 
 | 4. Rename across files | 4 (-64% vs P0) | 5,934 | 424 | 6,358 | 11 | 0 |
 | 5. Explain a file | 3 (0% vs P0) | 5,535 | 202 | 5,737 | 1 | 0 |
 | **TOTAL (5 tasks)** | **16 (-51.5% vs P0)** | **21,523** | **2,250** | **23,773 (-47.3% vs P0)** | **28** | **1** |
+
+---
+
+## Phase 3 — 4-Tier Fuzzy `editFile`, Atomic Multi-Edit & Workspace Search Tools (`fuzzy-edit.ts`, `tools.ts`)
+
+**Changes:**
+- Implemented 4-tier `editFile` cascade (`src/main/agent/fuzzy-edit.ts`, `Settings.fuzzyEditMatch`): Tier 1 exact -> Tier 2 trailing-whitespace + CRLF/LF normalization -> Tier 3 indentation-insensitive match with automatic scale/offset re-indentation -> Tier 4 unique sliding-window similarity (`>= 0.90`). Ambiguous matches are always rejected; failed edits return up to 3 closest line-numbered snippets.
+- Added atomic multi-edit `edits: [{ find, replace }]` on `editFile` (all-or-nothing in memory, single backup) and `replaceLines { path, startLine, endLine, content }`.
+- Upgraded `readFile` with `startLine`/`endLine` 1-based line-numbered ranges and automatic symbol outline + 150-line head truncation on files `> 200` lines.
+- Added `.gitignore`- and `.env`-safe `grep`, `listTree`, and `getSymbols` read-only tools.
+
+| Task | Model Calls | Input Tokens | Output Tokens | Total Tokens | Tool Calls | Failed Edits |
+| :--- | ---: | ---: | ---: | ---: | ---: | ---: |
+| 1. Create a small website | 1 (-80% vs P0) | 370 | 1,098 | 1,468 | 4 | 0 |
+| 2. Fix a TS error | 4 (-50% vs P0) | 5,643 | 195 | 5,838 | 5 | 0 |
+| 3. Add function + test | 3 (-50% vs P0) | 4,415 | 278 | 4,693 | 6 | 0 |
+| 4. Rename across files | 3 (-73% vs P0) | 4,560 | 358 | 4,918 | 6 | 0 |
+| 5. Explain a file | 3 (0% vs P0) | 6,273 | 202 | 6,475 | 1 | 0 |
+| **TOTAL (5 tasks)** | **14 (-57.6% vs P0)** | **21,261** | **2,131** | **23,392 (-48.1% vs P0)** | **22** | **0** |
