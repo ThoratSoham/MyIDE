@@ -12,6 +12,7 @@ import type {
 import { isLaneUsable } from "./providers";
 import { estimateTokens, shrinkPromptToTokens } from "./tokenize";
 import { StreamCancelledError } from "./http";
+import { fitMessagesToLaneBudget } from "../context/budget";
 import { currentTelemetry } from "../telemetry";
 import log from "electron-log";
 
@@ -227,8 +228,21 @@ export class Router {
         continue;
       }
 
-      if (lane.limits.maxTokensPerRequest != null && baseEstimate > lane.limits.maxTokensPerRequest) {
-        const reason = `Skipped: prompt (~${baseEstimate} tokens) exceeds ${lane.limits.maxTokensPerRequest}-token cap`;
+      const laneInputCap =
+        lane.limits.maxTokensPerRequest != null
+          ? Math.max(250, lane.limits.maxTokensPerRequest - expectedOutputTokens)
+          : lane.limits.tpm != null && lane.limits.tpm <= 12_000
+          ? Math.max(400, Math.min(5_500, lane.limits.tpm - expectedOutputTokens))
+          : null;
+      const laneMessages =
+        laneInputCap != null ? fitMessagesToLaneBudget(messages, laneInputCap) : messages;
+      const laneEstimate =
+        laneMessages === messages
+          ? baseEstimate
+          : estimateTokens(promptText(laneMessages), expectedOutputTokens);
+
+      if (lane.limits.maxTokensPerRequest != null && laneEstimate > lane.limits.maxTokensPerRequest) {
+        const reason = `Skipped: prompt (~${laneEstimate} tokens) exceeds ${lane.limits.maxTokensPerRequest}-token cap`;
         logEvent(`toobig:${lane.id}`, `lane ${lane.id} ${reason}`);
         laneDetails.push({
           laneId: lane.id,
@@ -242,7 +256,7 @@ export class Router {
       }
 
       const now = Date.now();
-      if (!isLaneUsable(lane, health, baseEstimate, now)) {
+      if (!isLaneUsable(lane, health, laneEstimate, now)) {
         const resumeAtMs =
           (health.removedUntil && health.removedUntil > now ? health.removedUntil : null) ??
           (health.cooldownUntil && health.cooldownUntil > now ? health.cooldownUntil : null) ??
@@ -281,7 +295,7 @@ export class Router {
 
       let req: ProviderRequest = {
         lane,
-        messages,
+        messages: laneMessages,
         schema: options?.schema,
         maxTokens: options?.maxTokens,
         signal: options?.signal,

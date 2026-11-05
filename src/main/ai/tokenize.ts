@@ -6,6 +6,10 @@
 const CHAR_TO_TOKEN = 3.5;
 const OUTPUT_BUFFER_TOKENS = 512;
 
+export function estimateInputTokens(text: string): number {
+  return Math.ceil(text.length / CHAR_TO_TOKEN);
+}
+
 export function estimateTokens(prompt: string, expectedOutputTokens = 256): number {
   const inputTokens = Math.ceil(prompt.length / CHAR_TO_TOKEN);
   return inputTokens + Math.max(expectedOutputTokens, OUTPUT_BUFFER_TOKENS);

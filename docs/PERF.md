@@ -85,3 +85,22 @@ This document records measured model calls, token budgets, tool executions, and 
 | 4. Rename across files | 3 (-73% vs P0) | 4,560 | 358 | 4,918 | 6 | 0 |
 | 5. Explain a file | 3 (0% vs P0) | 6,273 | 202 | 6,475 | 1 | 0 |
 | **TOTAL (5 tasks)** | **14 (-57.6% vs P0)** | **21,261** | **2,131** | **23,392 (-48.1% vs P0)** | **22** | **0** |
+
+---
+
+## Phase 4 — Context Efficiency: Repo Map, BM25 Retriever, Working Memory & Lane Budget Fitter (`src/main/context/*`)
+
+**Changes:**
+- **`src/main/context/repo-map.ts`** (`Settings.repoMapEnabled`): Extracts compact symbol outlines + relative import edges across TS/JS/CSS/HTML/JSON/Python, caches per-file metadata by `mtimeMs` in `.myide/cache/repo-map.json` (invalidated by `fs-watcher.ts` and write tools), and ranks files within a ~1,200-token budget.
+- **`src/main/context/bm25.ts`**: Pure main-process Okapi BM25 (`k1 = 1.5, b = 0.75`) behind `CodeRetriever`, resolving `@file`, `@symbol`, and code identifiers directly into `[Retrieved Context]` with zero model calls.
+- **`src/main/context/working-memory.ts`** (`Settings.rollingSummaryEnabled`): Converts older `<tool_result>` messages into 1-line stubs and distills evicted history into `[Working Memory]`.
+- **`src/main/context/budget.ts`**: Preserves `messages[0]` byte-for-byte for provider prompt-cache hits and fits prompts to each lane's token cap in strict priority order (`system > working memory > user task > recent turns > repo map > retrieved BM25`).
+
+| Task | Model Calls | Input Tokens | Output Tokens | Total Tokens | Tool Calls | Failed Edits |
+| :--- | ---: | ---: | ---: | ---: | ---: | ---: |
+| 1. Create a small website | 1 (-80% vs P0) | 370 | 1,098 | 1,468 | 4 | 0 |
+| 2. Fix a TS error | 2 (-75% vs P0) | 2,835 | 127 | 2,962 | 2 | 0 |
+| 3. Add function + test | 2 (-67% vs P0) | 3,015 | 259 | 3,274 | 4 | 0 |
+| 4. Rename across files | 2 (-82% vs P0) | 3,351 | 352 | 3,703 | 5 | 0 |
+| 5. Explain a file | 2 (-33% vs P0) | 3,839 | 165 | 4,004 | 0 | 0 |
+| **TOTAL (5 tasks)** | **9 (-72.7% vs P0)** | **13,410** | **2,001** | **15,411 (-65.8% vs P0)** | **15** | **0** |

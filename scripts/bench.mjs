@@ -490,6 +490,7 @@ function createAddFnResponder() {
 // 4. Task: Rename symbol across 4 files (with a 250-line unrelated file in src/)
 function createRenameResponder() {
   let stage = 0;
+  let edited = false;
   const edits = [
     {
       path: "src/constants.ts",
@@ -517,17 +518,19 @@ function createRenameResponder() {
     const caps = detectCapabilities(fullPrompt);
     stage += 1;
 
-    if (caps.batchedActions && caps.hasRetrievedContext) {
-      if (stage === 1) {
-        return JSON.stringify({
-          thought: "Retrieved context already shows all 4 APP_TITLE files; batch all 4 edits.",
-          actions: edits.map((e) => ({ tool: "editFile", args: e })),
-        });
-      }
+    if (edited) {
       return JSON.stringify({
         thought: "Renamed across all 4 files.",
         tool: "markComplete",
         args: { summary: "Renamed APP_TITLE to BRAND_NAME across constants.ts, header.ts, footer.ts, and index.ts." },
+      });
+    }
+
+    if (caps.batchedActions && caps.hasRetrievedContext) {
+      edited = true;
+      return JSON.stringify({
+        thought: "Retrieved context already shows all 4 APP_TITLE files; batch all 4 edits.",
+        actions: edits.map((e) => ({ tool: "editFile", args: e })),
       });
     }
 
@@ -539,16 +542,10 @@ function createRenameResponder() {
           args: { pattern: "APP_TITLE" },
         });
       }
-      if (stage === 2) {
-        return JSON.stringify({
-          thought: "Batch editFile across all 4 matching files.",
-          actions: edits.map((e) => ({ tool: "editFile", args: e })),
-        });
-      }
+      edited = true;
       return JSON.stringify({
-        thought: "Complete.",
-        tool: "markComplete",
-        args: { summary: "Renamed APP_TITLE to BRAND_NAME across all 4 files." },
+        thought: "Batch editFile across all 4 matching files.",
+        actions: edits.map((e) => ({ tool: "editFile", args: e })),
       });
     }
 

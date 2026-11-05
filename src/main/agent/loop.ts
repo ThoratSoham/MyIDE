@@ -7,6 +7,10 @@ import { formatLocalTime } from "../ai/router";
 import { estimateTokens } from "../ai/tokenize";
 import { parseJsonLoose } from "../quality/json-repair";
 import { validateSchema } from "../quality/schema";
+import { buildRetrievedContextBlock } from "../context/bm25";
+import { assembleTurnMessages } from "../context/budget";
+import { buildRepoMap, invalidateRepoMapCache } from "../context/repo-map";
+import { compressConversationHistory, createWorkingMemory } from "../context/working-memory";
 import { getSettings } from "../store";
 import { currentTelemetry } from "../telemetry";
 import { runAutoVerifyAfterWrites } from "./auto-verify";
@@ -349,6 +353,7 @@ export async function runAgent(ai: AIService, state: AgentState, opts: AgentOpti
   let nudged = false;
   let loopRecovered = false;
   const recent: string[] = [];
+  const workingMemory = createWorkingMemory(opts.taskMd || "");
 
   let history: Message[] = [
     { role: "system", content: systemPrompt(state, allowTools) },
@@ -381,16 +386,45 @@ export async function runAgent(ai: AIService, state: AgentState, opts: AgentOpti
         opts.signal.note = undefined;
       }
 
+      const settings = getSettings();
       const ledger = allowTools ? progressLedger(state) : "";
-      const compacted = compactHistoryToBudget(history, tokenBudget - (ledger ? estimateTokens(ledger, 0) : 0));
-      // Keep messages[0] strictly as the static system prompt so provider prefix caching hits!
-      const messages: Message[] = [...compacted];
-      if (ledger) {
-        messages.splice(Math.min(2, messages.length), 0, {
-          role: "user",
-          content: `[System progress ledger]\n${ledger}`,
-        });
-      }
+      const repoMapBlock =
+        allowTools && settings.repoMapEnabled !== false
+          ? buildRepoMap({
+              workspaceRoot: state.workspaceRoot,
+              query: opts.taskMd,
+              changedFiles: [...state.changedFiles.keys()],
+              maxTokens: 1_200,
+            })
+          : "";
+      const retrievedContextBlock =
+        settings.repoMapEnabled !== false &&
+        steps === 0 &&
+        state.changedFiles.size === 0 &&
+        (allowTools || /@[A-Za-z0-9_./\\-]+/.test(opts.taskMd))
+          ? buildRetrievedContextBlock(state.workspaceRoot, opts.taskMd, {
+              maxChunks: 6,
+              maxTokens: 1_400,
+            })
+          : "";
+
+      const compressed =
+        settings.rollingSummaryEnabled !== false
+          ? await compressConversationHistory(history, workingMemory, {
+              tokenBudget,
+              keepRecentMessages: KEEP_RECENT_MESSAGES,
+              rollingSummaryEnabled: true,
+            })
+          : { messages: compactHistoryToBudget(history, tokenBudget), workingMemoryBlock: "", evictedCount: 0 };
+
+      // Assemble prompt while keeping messages[0] byte-identical for provider prompt-cache hits.
+      const messages: Message[] = assembleTurnMessages({
+        baseMessages: compressed.messages,
+        repoMapBlock,
+        retrievedContextBlock,
+        progressLedgerBlock: ledger,
+        maxInputTokens: tokenBudget + 1_600,
+      });
 
       let rawStreamed = "";
       let emittedPreviewLen = 0;
@@ -801,6 +835,9 @@ export async function runAgent(ai: AIService, state: AgentState, opts: AgentOpti
       const writtenThisTurn = executed
         .filter((r) => r.ok && WRITE_TOOL_NAMES.has(r.tool) && typeof r.args?.path === "string")
         .map((r) => String(r.args.path));
+      if (writtenThisTurn.length > 0) {
+        for (const p of writtenThisTurn) invalidateRepoMapCache(state.workspaceRoot, p);
+      }
       const autoVerifyRes =
         writtenThisTurn.length > 0 && getSettings().autoVerifyAfterEdits !== false
           ? await runAutoVerifyAfterWrites(state, writtenThisTurn)

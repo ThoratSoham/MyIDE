@@ -1,6 +1,7 @@
 import fs from "fs";
 import log from "electron-log";
 import type { WorkspaceChanged } from "../shared/electron-api-types";
+import { invalidateRepoMapCache } from "./context/repo-map";
 
 // PART 3 point 6: when files change on disk the explorer, the open tabs and the
 // preview must refresh by themselves. One recursive watcher per active root,
@@ -31,6 +32,7 @@ function schedule(rel: string): void {
 function flush(): void {
   timer = null;
   if (!watchedDir) return;
+  invalidateRepoMapCache(watchedDir, lastPath || undefined);
   try {
     sink?.({ path: lastPath || watchedDir, kind: "file" });
   } catch (e) {
