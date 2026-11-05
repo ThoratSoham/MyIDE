@@ -1,7 +1,7 @@
 import fs from "fs";
 import path from "path";
 import type { AIService } from "../ai/service";
-import type { Message } from "../ai/types";
+import type { Message, TaskClass } from "../ai/types";
 import { formatLocalTime } from "../ai/router";
 import { applyParsedFileTags, parseFileTags } from "../agent/file-tags";
 import { parseSuggestedFiles, type SuggestedFile } from "../agent/suggest";
@@ -149,6 +149,7 @@ async function callSingleShotModel(
   ai: AIService,
   messages: Message[],
   opts: SingleShotWebsiteOptions,
+  taskClass: TaskClass = "codegen",
 ): Promise<{
   ok: boolean;
   content: string;
@@ -156,7 +157,7 @@ async function callSingleShotModel(
   stoppedMsg?: string;
 }> {
   const promptChars = messages.reduce((sum, m) => sum + (m.content?.length ?? 0), 0);
-  const res = await ai.complete("reasoning", messages, {
+  const res = await ai.complete(taskClass, messages, {
     expectedOutputTokens: 2400,
     signal: opts.abortController.signal,
     cacheStaticPrefix: true,
@@ -321,7 +322,7 @@ export async function runSingleShotWebsite(
       { role: "user", content: repairPrompt },
     ];
 
-    const repairRes = await callSingleShotModel(ai, repairMessages, opts);
+    const repairRes = await callSingleShotModel(ai, repairMessages, opts, "repair");
     if (!repairRes.ok) break;
     lastModelId = repairRes.modelId ?? lastModelId;
 

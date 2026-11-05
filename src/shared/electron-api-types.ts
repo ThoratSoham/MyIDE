@@ -81,6 +81,10 @@ export interface ModelConfigEntry {
   priority: number;
   maxTokens: number;
   costTier: CostTier;
+  supportsJsonMode?: boolean;
+  supportsResponseSchema?: boolean;
+  supportsNativeTools?: boolean;
+  taskClasses?: string[];
 }
 
 export interface DroppedModelInfo {

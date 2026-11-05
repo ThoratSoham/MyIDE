@@ -19,15 +19,15 @@ import { fetchProviderModelIds } from "./real-providers";
 export const MODEL_CATALOG_TTL_MS = 60 * 60 * 1000; // 1 hour
 
 export const DEFAULT_MODEL_ENTRIES: ModelConfigEntry[] = [
-  { id: "gemini-3.8-flash", provider: "gemini", priority: 1, maxTokens: 32768, costTier: "free" },
-  { id: "gemini-2.5-flash", provider: "gemini", priority: 2, maxTokens: 32768, costTier: "free" },
-  { id: "gemini-2.5-flash-lite", provider: "gemini", priority: 3, maxTokens: 32768, costTier: "free" },
-  { id: "openai/gpt-oss-120b", provider: "groq", priority: 4, maxTokens: 5500, costTier: "free" },
-  { id: "qwen/qwen3.8-27b", provider: "groq", priority: 5, maxTokens: 5500, costTier: "free" },
-  { id: "openai/gpt-oss-20b", provider: "groq", priority: 6, maxTokens: 5500, costTier: "free" },
-  { id: "meta-llama/llama-3.3-70b-instruct", provider: "openrouter", priority: 7, maxTokens: 16384, costTier: "low" },
-  { id: "meta-llama/llama-3.2-3b-instruct", provider: "openrouter", priority: 8, maxTokens: 16384, costTier: "low" },
-  { id: "qwen/qwen-2.5-7b-instruct", provider: "openrouter", priority: 9, maxTokens: 16384, costTier: "low" },
+  { id: "gemini-3.8-flash", provider: "gemini", priority: 1, maxTokens: 32768, costTier: "free", supportsJsonMode: true, supportsResponseSchema: true },
+  { id: "gemini-2.5-flash", provider: "gemini", priority: 2, maxTokens: 32768, costTier: "free", supportsJsonMode: true, supportsResponseSchema: true },
+  { id: "gemini-2.5-flash-lite", provider: "gemini", priority: 3, maxTokens: 32768, costTier: "free", supportsJsonMode: true, supportsResponseSchema: true, taskClasses: ["classify", "summarize", "chat", "autocomplete"] },
+  { id: "openai/gpt-oss-120b", provider: "groq", priority: 4, maxTokens: 5500, costTier: "free", supportsJsonMode: true },
+  { id: "qwen/qwen3.8-27b", provider: "groq", priority: 5, maxTokens: 5500, costTier: "free", supportsJsonMode: true },
+  { id: "openai/gpt-oss-20b", provider: "groq", priority: 6, maxTokens: 5500, costTier: "free", supportsJsonMode: true, taskClasses: ["classify", "summarize", "chat", "autocomplete"] },
+  { id: "meta-llama/llama-3.3-70b-instruct", provider: "openrouter", priority: 7, maxTokens: 16384, costTier: "low", supportsJsonMode: true },
+  { id: "meta-llama/llama-3.2-3b-instruct", provider: "openrouter", priority: 8, maxTokens: 16384, costTier: "low", taskClasses: ["classify", "summarize", "chat", "autocomplete"] },
+  { id: "qwen/qwen-2.5-7b-instruct", provider: "openrouter", priority: 9, maxTokens: 16384, costTier: "low", supportsJsonMode: true },
 ];
 
 interface ModelsFileShape {
@@ -79,7 +79,19 @@ export function normalizeModelEntries(raw: unknown): ModelConfigEntry[] {
         ? Math.floor(Number(item.maxTokens))
         : defaultMax;
     const costTier: CostTier = isValidCostTier(item.costTier) ? item.costTier : "free";
-    out.push({ id, provider: item.provider, priority, maxTokens, costTier });
+    out.push({
+      id,
+      provider: item.provider,
+      priority,
+      maxTokens,
+      costTier,
+      ...(typeof item.supportsJsonMode === "boolean" ? { supportsJsonMode: item.supportsJsonMode } : {}),
+      ...(typeof item.supportsResponseSchema === "boolean" ? { supportsResponseSchema: item.supportsResponseSchema } : {}),
+      ...(typeof item.supportsNativeTools === "boolean" ? { supportsNativeTools: item.supportsNativeTools } : {}),
+      ...(Array.isArray(item.taskClasses)
+        ? { taskClasses: item.taskClasses.filter((t): t is string => typeof t === "string") }
+        : {}),
+    });
   }
   return out.sort((a, b) => a.priority - b.priority);
 }

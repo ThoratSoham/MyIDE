@@ -352,6 +352,7 @@ export async function runAgent(ai: AIService, state: AgentState, opts: AgentOpti
   let consecutiveErrors = 0;
   let nudged = false;
   let loopRecovered = false;
+  let lastTurnHadFailure = false;
   const recent: string[] = [];
   const workingMemory = createWorkingMemory(opts.taskMd || "");
 
@@ -387,7 +388,8 @@ export async function runAgent(ai: AIService, state: AgentState, opts: AgentOpti
       }
 
       const settings = getSettings();
-      const ledger = allowTools ? progressLedger(state) : "";
+      const freeSaver = settings.freeTierSaver !== false;
+      const ledger = allowTools ? progressLedger(state, freeSaver) : "";
       const repoMapBlock =
         allowTools && settings.repoMapEnabled !== false
           ? buildRepoMap({
@@ -401,7 +403,7 @@ export async function runAgent(ai: AIService, state: AgentState, opts: AgentOpti
         settings.repoMapEnabled !== false &&
         steps === 0 &&
         state.changedFiles.size === 0 &&
-        (allowTools || /@[A-Za-z0-9_./\\-]+/.test(opts.taskMd))
+        (allowTools || freeSaver || /@[A-Za-z0-9_./\\-]+/.test(opts.taskMd))
           ? buildRetrievedContextBlock(state.workspaceRoot, opts.taskMd, {
               maxChunks: 6,
               maxTokens: 1_400,
@@ -429,8 +431,9 @@ export async function runAgent(ai: AIService, state: AgentState, opts: AgentOpti
       let rawStreamed = "";
       let emittedPreviewLen = 0;
 
+      const taskClass = !allowTools ? "chat" : lastTurnHadFailure ? "repair" : "codegen";
       const promptChars = messages.reduce((sum, m) => sum + (m.content?.length ?? 0), 0);
-      const res = await ai.complete("reasoning", messages, {
+      const res = await ai.complete(taskClass, messages, {
         schema: AGENT_SCHEMA,
         expectedOutputTokens: 900,
         signal: abortController.signal,
@@ -878,6 +881,8 @@ export async function runAgent(ai: AIService, state: AgentState, opts: AgentOpti
         combinedToolMessage = lines.join("\n");
       }
 
+      lastTurnHadFailure =
+        executed.some((r) => !r.ok) || Boolean(autoVerifyRes && autoVerifyRes.ran && !autoVerifyRes.ok);
       history.push({ role: "assistant", content: assistantRecord });
       history.push({ role: "user", content: combinedToolMessage });
 
@@ -958,7 +963,10 @@ function systemPrompt(state: AgentState, allowTools: boolean): string {
   return built;
 }
 
-function progressLedger(state: AgentState): string {
+function progressLedger(state: AgentState, freeSaver = false): string {
+  if (freeSaver && state.plan.length === 0 && state.changedHtml.size === 0) {
+    return "";
+  }
   const files = [...state.changedHtml].slice(0, 12);
   const steps = state.plan.map((s) => `${s.status === "done" ? "[x]" : s.status === "doing" ? "[>]" : "[ ]"} ${s.title}`);
   const lines = [

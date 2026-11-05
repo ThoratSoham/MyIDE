@@ -104,3 +104,23 @@ This document records measured model calls, token budgets, tool executions, and 
 | 4. Rename across files | 2 (-82% vs P0) | 3,351 | 352 | 3,703 | 5 | 0 |
 | 5. Explain a file | 2 (-33% vs P0) | 3,839 | 165 | 4,004 | 0 | 0 |
 | **TOTAL (5 tasks)** | **9 (-72.7% vs P0)** | **13,410** | **2,001** | **15,411 (-65.8% vs P0)** | **15** | **0** |
+
+---
+
+## Phase 5 — Smarter Router, Proactive Token Bucket, Malformed-JSON Probation & `freeTierSaver` (`router.ts`, `ledger.ts`, `model-settings.ts`, `jobs.ts`)
+
+**Changes:**
+- **Task-class routing (`src/main/ai/router.ts`, `model-settings.ts`)**: Classified calls into `classify | summarize | plan | codegen | repair | chat` (`TaskClass`), prioritizing lighter/faster lanes for `classify`, `summarize`, `plan`, and `chat`, while reserving higher-capacity coder lanes for `codegen` and `repair` (configurable per model via `taskClasses` in `models.json`).
+- **Proactive quota token bucket (`src/main/ai/ledger.ts`)**: `canAfford(lane, estimatedTotalTokens)` checks RPM, TPM, and RPD windows *before* firing HTTP requests so known-exhausted or insufficient-budget lanes are skipped with zero wasted failed calls.
+- **Dynamic lane scoring & malformed-JSON probation**: Tracks rolling valid-JSON rate, error rate, and average latency per lane; lanes exceeding 25% malformed JSON rate across `>= 4` schema calls enter temporary probation cooldown and are automatically re-tested once the cooldown expires.
+- **Native structured output (`src/main/ai/real-providers.ts`)**: Capability-aware `response_format: { type: "json_object" }` (with automatic 400 fallback) and Gemini `responseMimeType: "application/json"` + `responseSchema`, stored as capability flags in `models.json`.
+- **`freeTierSaver` (`src/main/jobs.ts`, `loop.ts`, default `ON`)**: Answers `explain` / trivial `chat` prompts in a single tool-free call with pre-injected BM25 / `@file` context, skips clarification round-trips when the local classifier is confident, and omits `updatePlan` prompt overhead on small focused edits.
+
+| Task | Model Calls | Input Tokens | Output Tokens | Total Tokens | Tool Calls | Failed Edits |
+| :--- | ---: | ---: | ---: | ---: | ---: | ---: |
+| 1. Create a small website | 1 (-80% vs P0) | 370 | 1,098 | 1,468 | 4 | 0 |
+| 2. Fix a TS error | 2 (-75% vs P0) | 2,743 | 127 | 2,870 | 2 | 0 |
+| 3. Add function + test | 2 (-67% vs P0) | 2,923 | 259 | 3,182 | 4 | 0 |
+| 4. Rename across files | 2 (-82% vs P0) | 3,259 | 352 | 3,611 | 5 | 0 |
+| 5. Explain a file | 1 (-67% vs P0) | 1,263 | 85 | 1,348 | 0 | 0 |
+| **TOTAL (5 tasks)** | **8 (-75.8% vs P0)** | **10,558** | **1,921** | **12,479 (-72.3% vs P0)** | **15** | **0** |

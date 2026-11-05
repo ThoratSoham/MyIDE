@@ -144,6 +144,10 @@ export class AIService {
         this.ledger.markSessionDead(lane, reason, suggestedModel),
       setLaneCooldown: (lane, untilMs, reason) =>
         this.ledger.setCooldown(lane, untilMs, reason),
+      canAfford: (lane, estimatedTokens, now) =>
+        this.ledger.canAfford(lane, estimatedTokens, now),
+      recordQualitySample: (lane, sample) =>
+        this.ledger.recordQualitySample(lane, sample),
       onOutcome: (lane, outcome, tokens) => this.applyOutcome(lane, outcome, tokens),
       onLaneEvent: (event) => this.onLaneEvent?.(event),
     });
@@ -151,19 +155,41 @@ export class AIService {
 
   private lanesForRole(role: TaskClass): Lane[] {
     if (!this.realKeysPresent) {
-      const offlineMatch = this.lanes.filter((l) => l.provider === "offline" && l.role === role);
+      const mappedOfflineRole =
+        role === "autocomplete" || role === "classify"
+          ? "autocomplete"
+          : role === "chat" || role === "summarize"
+          ? "general"
+          : "reasoning";
+      const offlineMatch = this.lanes.filter((l) => l.provider === "offline" && l.role === mappedOfflineRole);
       return offlineMatch.length > 0 ? offlineMatch : this.lanes.filter((l) => l.provider === "offline");
     }
     const realLanes = this.lanes.filter((l) => l.provider !== "offline");
-    if (role === "autocomplete") {
-      // Prefer fast/low-latency lanes first for autocomplete, then priority order.
-      return [...realLanes].sort((a, b) => {
-        const aFast = a.provider === "groq" || a.model.includes("lite") || a.model.includes("instant") ? 0 : 1;
-        const bFast = b.provider === "groq" || b.model.includes("lite") || b.model.includes("instant") ? 0 : 1;
-        return aFast - bFast || (a.priority ?? 99) - (b.priority ?? 99);
-      });
-    }
-    return realLanes;
+    const isLightTask =
+      role === "autocomplete" || role === "classify" || role === "summarize" || role === "chat";
+
+    return [...realLanes].sort((a, b) => {
+      // 1. Explicit taskClasses match in models.json gets a boost for light tasks
+      const aExplicit = a.taskClasses?.includes(role) ? -4 : 0;
+      const bExplicit = b.taskClasses?.includes(role) ? -4 : 0;
+
+      // 2. For light tasks (classify/summarize/chat/autocomplete), prefer fast/high-RPM models first
+      // so scarce daily quota on top codegen lanes is saved for codegen/plan/repair!
+      const isFastModel = (l: Lane) =>
+        l.provider === "groq" ||
+        l.model.includes("lite") ||
+        l.model.includes("instant") ||
+        l.model.includes("3b") ||
+        l.model.includes("7b") ||
+        l.model.includes("20b");
+      const aTier = isLightTask ? (isFastModel(a) ? -6 : 0) : 0;
+      const bTier = isLightTask ? (isFastModel(b) ? -6 : 0) : 0;
+
+      // 3. Combine user priority + dynamic rolling quality penalty (malformed JSON / error rate / latency)
+      const aScore = (a.priority ?? 50) + aExplicit + aTier + this.ledger.qualityScorePenalty(a.id);
+      const bScore = (b.priority ?? 50) + bExplicit + bTier + this.ledger.qualityScorePenalty(b.id);
+      return aScore - bScore;
+    });
   }
 
   async syncLiveModels(force = false): Promise<ModelsStateView> {

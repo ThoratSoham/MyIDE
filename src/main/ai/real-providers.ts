@@ -197,6 +197,7 @@ async function streamOpenAiCompatible(
   extraHeaders: Record<string, string> = {},
 ): Promise<ProviderOutcome> {
   let res: Response;
+  const allowJsonMode = Boolean(req.schema && req.lane.capabilities?.supportsJsonMode !== false);
   try {
     const opened = await openStream(
       url,
@@ -213,7 +214,7 @@ async function streamOpenAiCompatible(
           stream: true,
           temperature: req.temperature ?? 0.7,
           max_tokens: req.maxTokens ?? 2048,
-          ...(req.schema ? { response_format: { type: "json_object" } } : {}),
+          ...(allowJsonMode ? { response_format: { type: "json_object" } } : {}),
         }),
       },
       TIMEOUTS,
@@ -228,6 +229,12 @@ async function streamOpenAiCompatible(
 
   if (!res.ok) {
     const body = await readText(res, TIMEOUT_CHUNK_MS, req.signal).catch(() => "");
+    // If a free model rejects response_format: json_object with HTTP 400, remember and retry plain once!
+    if (res.status === 400 && allowJsonMode && /response_format|json_object/i.test(body)) {
+      if (req.lane.capabilities) req.lane.capabilities.supportsJsonMode = false;
+      else req.lane.capabilities = { supportsJsonMode: false };
+      return streamOpenAiCompatible(provider, url, apiKey, model, req, extraHeaders);
+    }
     return { ok: false, error: classifyHttpError(res.status, body, headers) };
   }
 
@@ -268,6 +275,20 @@ async function streamOpenAiCompatible(
 // Gemini (Google AI Studio)
 // ---------------------------------------------------------------------------
 
+function hasClosedObjectProperties(node: unknown): boolean {
+  if (!node || typeof node !== "object") return true;
+  const rec = node as Record<string, unknown>;
+  if (rec.type === "object") {
+    const props = rec.properties as Record<string, unknown> | undefined;
+    if (!props || Object.keys(props).length === 0) return false;
+    return Object.values(props).every(hasClosedObjectProperties);
+  }
+  if (rec.type === "array" && rec.items) {
+    return hasClosedObjectProperties(rec.items);
+  }
+  return true;
+}
+
 async function streamGemini(apiKey: string, model: string, req: ProviderRequest): Promise<ProviderOutcome> {
   const systemParts = req.messages.filter((m) => m.role === "system").map((m) => ({ text: m.content }));
   const contents = req.messages
@@ -280,6 +301,13 @@ async function streamGemini(apiKey: string, model: string, req: ProviderRequest)
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(
     model,
   )}:streamGenerateContent?alt=sse`;
+
+  const allowJsonMime = Boolean(req.schema && req.lane.capabilities?.supportsJsonMode !== false);
+  const attachSchema = Boolean(
+    allowJsonMime &&
+      req.lane.capabilities?.supportsResponseSchema &&
+      hasClosedObjectProperties(req.schema),
+  );
 
   let res: Response;
   try {
@@ -297,7 +325,8 @@ async function streamGemini(apiKey: string, model: string, req: ProviderRequest)
           generationConfig: {
             temperature: req.temperature ?? 0.7,
             maxOutputTokens: req.maxTokens ?? 2048,
-            ...(req.schema ? { responseMimeType: "application/json" } : {}),
+            ...(allowJsonMime ? { responseMimeType: "application/json" } : {}),
+            ...(attachSchema ? { responseSchema: req.schema } : {}),
           },
         }),
       },

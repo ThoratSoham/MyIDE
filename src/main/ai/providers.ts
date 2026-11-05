@@ -1,5 +1,5 @@
 import type { ModelConfigEntry } from "../../shared/electron-api-types";
-import type { ProviderId, ProviderConfig, Lane, LaneLimits, LaneHealth } from "./types";
+import type { ProviderId, ProviderConfig, Lane, LaneLimits, LaneHealth, TaskClass } from "./types";
 import { GROQ_MAX_REQUEST_TOKENS } from "./types";
 import { DEFAULT_MODEL_ENTRIES } from "./model-settings";
 
@@ -109,6 +109,12 @@ export function buildLanes(entries: ModelConfigEntry[] = DEFAULT_MODEL_ENTRIES):
       priority: entry.priority,
       maxTokens: entry.maxTokens,
       costTier: entry.costTier,
+      taskClasses: entry.taskClasses as TaskClass[] | undefined,
+      capabilities: {
+        supportsJsonMode: entry.supportsJsonMode ?? true,
+        supportsResponseSchema: entry.supportsResponseSchema ?? entry.provider === "gemini",
+        supportsNativeTools: entry.supportsNativeTools ?? false,
+      },
       limits,
     });
   }

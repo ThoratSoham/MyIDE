@@ -14,13 +14,31 @@ import { estimateTokens, shrinkPromptToTokens } from "./tokenize";
 import { StreamCancelledError } from "./http";
 import { fitMessagesToLaneBudget } from "../context/budget";
 import { currentTelemetry } from "../telemetry";
+import type { AffordabilityCheck, LaneQualitySample } from "./ledger";
 import log from "electron-log";
 
 export const DEFAULT_CHAIN_ORDER: Record<TaskClass, ProviderId[]> = {
+  classify: ["groq", "gemini", "openrouter"],
+  summarize: ["groq", "gemini", "openrouter"],
+  plan: ["gemini", "groq", "openrouter"],
+  codegen: ["gemini", "groq", "openrouter"],
+  repair: ["gemini", "groq", "openrouter"],
+  chat: ["groq", "gemini", "openrouter"],
   reasoning: ["gemini", "groq", "openrouter"],
   general: ["gemini", "groq", "openrouter"],
   autocomplete: ["groq", "gemini", "openrouter"],
 };
+
+function isWellFormedJsonReply(raw: string): boolean {
+  const trimmed = raw.trim();
+  if (!trimmed) return false;
+  try {
+    const val = JSON.parse(trimmed);
+    return val !== null && typeof val === "object";
+  } catch {
+    return false;
+  }
+}
 
 // PART 1 #2:
 // - 404 / 400 "model unavailable": mark permanently dead for session, 0 retries, next lane, surface suggestedModel.
@@ -115,6 +133,8 @@ export interface RouterConfig {
   resetRetries?: (laneId: string) => void;
   markSessionDead?: (lane: Lane, reason: string, suggestedModel?: string) => void;
   setLaneCooldown?: (lane: Lane, untilMs: number, reason: string) => void;
+  canAfford?: (lane: Lane, estimatedTotalTokens: number, now: number) => AffordabilityCheck;
+  recordQualitySample?: (lane: Lane, sample: LaneQualitySample) => void;
   onOutcome?: (lane: Lane, outcome: ProviderOutcome, estimatedTokens: number) => void;
   onLaneEvent?: (event: RouterLaneEvent) => void;
   chainOrder?: Record<TaskClass, ProviderId[]>;
@@ -256,6 +276,22 @@ export class Router {
       }
 
       const now = Date.now();
+      const afford = this.config.canAfford?.(lane, laneEstimate, now);
+      if (afford && !afford.ok) {
+        const status = afford.status ?? "cooldown";
+        const reason = afford.reason ?? "Proactive quota bucket full";
+        logEvent(`proactive:${lane.id}`, `lane ${lane.id} pre-skipped: ${reason}`);
+        laneDetails.push({
+          laneId: lane.id,
+          provider: lane.provider,
+          model: lane.model,
+          status,
+          reason,
+          resumeAtMs: afford.resumeAtMs ?? null,
+        });
+        continue;
+      }
+
       if (!isLaneUsable(lane, health, laneEstimate, now)) {
         const resumeAtMs =
           (health.removedUntil && health.removedUntil > now ? health.removedUntil : null) ??
@@ -317,6 +353,7 @@ export class Router {
         }
 
         const estimate = estimateTokens(promptText(req.messages), expectedOutputTokens);
+        const callStartedAt = Date.now();
         let outcome: ProviderOutcome;
         try {
           outcome = await this.config.sendVia(lane, req);
@@ -333,10 +370,16 @@ export class Router {
             error: { kind: "networkError", message: e instanceof Error ? e.message : String(e) },
           };
         }
+        const latencyMs = Math.max(0, Date.now() - callStartedAt);
 
         if (outcome.ok) {
           this.config.onOutcome?.(lane, outcome, estimate);
-          log.info(`[router] success via ${lane.id} (~${estimate} tokens est.)`);
+          this.config.recordQualitySample?.(lane, {
+            ok: true,
+            latencyMs,
+            ...(options?.schema ? { validJson: isWellFormedJsonReply(outcome.content) } : {}),
+          });
+          log.info(`[router] success via ${lane.id} (~${estimate} tokens est., ${latencyMs}ms)`);
           this.config.resetRetries?.(lane.id);
           const inTok = outcome.usage?.promptTokens && outcome.usage.promptTokens > 0
             ? outcome.usage.promptTokens
@@ -362,6 +405,7 @@ export class Router {
           };
         }
 
+        this.config.recordQualitySample?.(lane, { ok: false, latencyMs });
         this.config.onOutcome?.(lane, outcome, estimate);
         const action = classifyError(err);
         logEvent(`err:${lane.id}:${err.kind}`, `lane ${lane.id} error ${err.kind}: ${err.message}`);

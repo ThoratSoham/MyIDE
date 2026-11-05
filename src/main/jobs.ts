@@ -319,7 +319,8 @@ export class JobManager {
         ? { intent: input.intent, label: INTENT_LABELS[input.intent], confidence: "high", reason: "you picked it", matched: [] }
         : routeIntent(text);
 
-    if (input.intent === "auto" && detected.confidence === "low") {
+    const freeSaver = getSettings().freeTierSaver !== false;
+    if (input.intent === "auto" && detected.confidence === "low" && (!freeSaver || text.length < 12)) {
       this.pendingQuestion = { kind: "clarify", text, mode: input.mode, traceId };
       hop("chat", traceId, 4, `main: route unclear -> asking one question`);
       this.pushMessage({
@@ -790,7 +791,17 @@ export class JobManager {
     const root = this.deps.workspaceRoot();
     const state = createAgentState(root);
     job.agentState = state;
-    const allowTools = job.intent !== "chat";
+    const freeSaver = getSettings().freeTierSaver !== false;
+    const isReadOnlyExplain =
+      freeSaver &&
+      job.intent !== "website" &&
+      /^\s*(?:explain|what\b|why\b|how\b|describe\b|summarize\b|walk\s+me\s+through|help\s+me\s+understand)\b/i.test(
+        job.brief,
+      ) &&
+      !/\b(?:fix|create|write|edit|rename|refactor|implement|add|delete|remove|update|change|modify|install|scaffold|generate)\b/i.test(
+        job.brief,
+      );
+    const allowTools = job.intent !== "chat" && !isReadOnlyExplain;
 
     const summary = await runAgent(this.deps.ai, state, {
       runId: job.id,

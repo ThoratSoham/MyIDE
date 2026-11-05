@@ -1,7 +1,22 @@
 import type { CostTier, LaneExhaustedDetail } from "../../shared/electron-api-types";
 
-// Task class drives chain order (FR-3.1).
-export type TaskClass = "reasoning" | "general" | "autocomplete";
+// Task class drives chain order & model tier selection (FR-3.1 + PHASE 5).
+export type TaskClass =
+  | "classify"
+  | "summarize"
+  | "plan"
+  | "codegen"
+  | "repair"
+  | "chat"
+  | "reasoning"
+  | "general"
+  | "autocomplete";
+
+export interface LaneCapabilities {
+  supportsJsonMode?: boolean;
+  supportsResponseSchema?: boolean;
+  supportsNativeTools?: boolean;
+}
 
 // Lane = one provider + one model.
 export interface Lane {
@@ -12,6 +27,8 @@ export interface Lane {
   priority?: number;
   maxTokens?: number;
   costTier?: CostTier;
+  taskClasses?: TaskClass[];
+  capabilities?: LaneCapabilities;
   // Defaults from section 5. These are editable defaults; the ledger and
   // headers/error text can override them at runtime (FR-2.4).
   limits: LaneLimits;
