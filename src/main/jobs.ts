@@ -26,6 +26,7 @@ import {
 } from "./fs-workspace";
 import { routeIntent, estimateRun, CLARIFY_OPTIONS, INTENT_LABELS } from "../shared/intent";
 import { hop, newTraceId, note as traceNote } from "./trace";
+import { finishRunTelemetry, startRunTelemetry, withRunTelemetry } from "./telemetry";
 import type {
   ChangedFile,
   ChatAction,
@@ -42,6 +43,7 @@ import type {
   PlanStep,
   ProviderKeyId,
   RunEstimate,
+  RunStats,
   StartInput,
   StageEvent,
   UserQuestionAnswerState,
@@ -201,6 +203,7 @@ export class JobManager {
       paused: a.paused,
       waiting: a.waiting,
       result: a.result,
+      runStats: a.runStats ?? null,
     };
   }
 
@@ -664,10 +667,14 @@ export class JobManager {
     job.running = true;
     job.finishedAt = null;
     job.emittedTerminalError = false;
+    const msgIndexBeforeRun = this.history.length;
+    const telemetry = startRunTelemetry(job.id);
     this.emitEvent({ type: "status", phase: "thinking", label: "Thinking…" });
     try {
-      if (job.kind === "website") await this.runWebsite(job);
-      else await this.runAgentJob(job);
+      await withRunTelemetry(telemetry, async () => {
+        if (job.kind === "website") await this.runWebsite(job);
+        else await this.runAgentJob(job);
+      });
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       log.error("job failed", e);
@@ -711,9 +718,35 @@ export class JobManager {
           action: { kind: "resume", label: "Resume" },
         });
       }
+
+      const stats = finishRunTelemetry(job.id, true);
+      if (stats) {
+        job.runStats = stats;
+        this.attachRunStats(msgIndexBeforeRun, stats);
+        this.emitEvent({ type: "run-stats", stats });
+      }
+
       if (!job.paused) this.clearCurrentJob();
       else this.scheduleAutoResume(job);
     }
+  }
+
+  private attachRunStats(startIdx: number, stats: RunStats): void {
+    // Attach runStats to the final assistant/files-changed/error message of this run so
+    // it renders inline at the bottom of the run AND persists in the session JSON.
+    for (let i = this.history.length - 1; i >= startIdx; i--) {
+      const m = this.history[i];
+      if (!m.collapsible && (m.role === "assistant" || m.role === "notice" || m.role === "error")) {
+        const updated: ChatMessage = { ...m, runStats: stats };
+        this.appendOrUpdateMessage(updated);
+        return;
+      }
+    }
+    this.pushMessage({
+      role: "notice",
+      text: "Run completed.",
+      runStats: stats,
+    });
   }
 
   private async runWebsite(job: ActiveJob): Promise<void> {
@@ -1203,6 +1236,7 @@ interface ActiveJob {
   abortController: AbortController;
   agentState?: AgentState;
   emittedTerminalError?: boolean;
+  runStats?: RunStats | null;
 }
 
 function websiteBrief(brief: string): string {

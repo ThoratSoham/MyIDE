@@ -12,6 +12,7 @@ import type {
 import { isLaneUsable } from "./providers";
 import { estimateTokens, shrinkPromptToTokens } from "./tokenize";
 import { StreamCancelledError } from "./http";
+import { currentTelemetry } from "../telemetry";
 import log from "electron-log";
 
 export const DEFAULT_CHAIN_ORDER: Record<TaskClass, ProviderId[]> = {
@@ -92,6 +93,7 @@ export interface SendResult {
   laneUsed?: Lane;
   error?: ProviderError;
   promptTokens?: number;
+  completionTokens?: number;
   authStop?: boolean;
   cancelled?: boolean;
   allExhausted?: boolean;
@@ -322,7 +324,19 @@ export class Router {
           this.config.onOutcome?.(lane, outcome, estimate);
           log.info(`[router] success via ${lane.id} (~${estimate} tokens est.)`);
           this.config.resetRetries?.(lane.id);
-          return { ok: true, content: outcome.content, laneUsed: lane, promptTokens: estimate };
+          const inTok = outcome.usage?.promptTokens && outcome.usage.promptTokens > 0
+            ? outcome.usage.promptTokens
+            : Math.ceil(promptText(req.messages).length / 3.5);
+          const outTok = outcome.usage?.completionTokens && outcome.usage.completionTokens > 0
+            ? outcome.usage.completionTokens
+            : Math.ceil(outcome.content.length / 3.5);
+          return {
+            ok: true,
+            content: outcome.content,
+            laneUsed: lane,
+            promptTokens: inTok,
+            completionTokens: outTok,
+          };
         }
 
         const err = outcome.error;
@@ -354,6 +368,7 @@ export class Router {
 
         // 2) 404 / 400 "model unavailable" -> permanently dead for session, 0 retries, move to next lane.
         if (action.kind === "modelDeadSession") {
+          currentTelemetry()?.recordDeadLane();
           this.config.markSessionDead?.(lane, action.reason, action.suggestedModel);
           this.config.onLaneEvent?.({
             type: "model-dead",
@@ -405,6 +420,7 @@ export class Router {
 
           if (rateLimitRetries < maxRetries429 && delayMs <= maxInlineWaitMs) {
             rateLimitRetries += 1;
+            currentTelemetry()?.recordRetry("429");
             this.config.bumpRetries?.(lane.id);
             this.config.onLaneEvent?.({
               type: "backoff",
@@ -444,6 +460,7 @@ export class Router {
         if (action.kind === "retryOnceServer") {
           if (serverRetries < MAX_SERVER_RETRIES_PER_LANE) {
             serverRetries += 1;
+            currentTelemetry()?.recordRetry("5xx");
             this.config.bumpRetries?.(lane.id);
             const jitter = Math.floor(randomFn() * Math.max(1, serverBackoffMs * 0.3));
             const delayMs = Math.max(serverBackoffMs, Math.min(action.backoffMs, 5_000)) + jitter;
@@ -484,6 +501,7 @@ export class Router {
         if (action.kind === "shrinkAndRetry") {
           if (!shrinkTried) {
             shrinkTried = true;
+            currentTelemetry()?.recordRetry("413");
             const smaller = shrinkPromptToTokens(fullPrompt, Math.floor(estimate * 0.6));
             log.info(`[router] 413 on ${lane.id}; retrying once with smaller prompt (~${smaller.actualTokens} tokens)`);
             req = { ...req, messages: [{ role: "user", content: smaller.text }] };

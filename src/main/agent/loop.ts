@@ -7,6 +7,7 @@ import { formatLocalTime } from "../ai/router";
 import { estimateTokens } from "../ai/tokenize";
 import { parseJsonLoose } from "../quality/json-repair";
 import { validateSchema } from "../quality/schema";
+import { currentTelemetry } from "../telemetry";
 import { parseSuggestedFiles, type SuggestedFile } from "./suggest";
 import {
   clip,
@@ -361,6 +362,7 @@ export async function runAgent(ai: AIService, state: AgentState, opts: AgentOpti
       let rawStreamed = "";
       let emittedPreviewLen = 0;
 
+      const promptChars = messages.reduce((sum, m) => sum + (m.content?.length ?? 0), 0);
       const res = await ai.complete("reasoning", messages, {
         schema: AGENT_SCHEMA,
         expectedOutputTokens: 900,
@@ -376,6 +378,22 @@ export async function runAgent(ai: AIService, state: AgentState, opts: AgentOpti
           }
         },
       });
+
+      if (res.ok) {
+        const resWithCompletion = res as typeof res & { completionTokens?: number };
+        const realInTok =
+          res.promptTokens && res.promptTokens > 15 ? res.promptTokens : Math.ceil(promptChars / 3.5);
+        const realOutTok =
+          resWithCompletion.completionTokens && resWithCompletion.completionTokens > 15
+            ? resWithCompletion.completionTokens
+            : Math.ceil((res.content ?? "").length / 3.5);
+        currentTelemetry()?.recordModelCall({
+          inputTokens: realInTok,
+          outputTokens: realOutTok,
+          promptChars,
+          completionChars: (res.content ?? "").length,
+        });
+      }
 
       if (res.cancelled || opts.signal.cancelled || abortController.signal.aborted) {
         saveRun(state, runId, history, steps, "stopped", startedAt, opts.taskMd);
@@ -514,6 +532,7 @@ export async function runAgent(ai: AIService, state: AgentState, opts: AgentOpti
 
       const summaryLabel = describeToolCall(tool.name, value.args);
       opts.onEvent({ type: "tool-start", name: tool.name, args: value.args, summaryLabel });
+      currentTelemetry()?.recordToolCall();
 
       const result = await tool.run(value.args ?? {}, {
         state,

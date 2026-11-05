@@ -1,5 +1,6 @@
 // FR-7.2: JSON repair. Weak models wrap JSON in prose or fences, leave trailing
 // commas, or use smart quotes. Code fixes those before anything touches disk.
+import { currentTelemetry } from "../telemetry";
 
 export interface ParseJsonResult {
   ok: boolean;
@@ -68,17 +69,23 @@ export function parseJsonLoose(raw: string): ParseJsonResult {
   }
 
   try {
-    return { ok: true, value: JSON.parse(text), repaired };
+    const val = JSON.parse(text);
+    if (repaired) currentTelemetry()?.recordMalformedJsonRepair();
+    return { ok: true, value: val, repaired };
   } catch (e) {
     // 5. Last resort: pull the first balanced object/array.
     const balanced = extractBalanced(text);
     if (balanced) {
       try {
-        return { ok: true, value: JSON.parse(balanced), repaired: true };
+        const val = JSON.parse(balanced);
+        currentTelemetry()?.recordMalformedJsonRepair();
+        return { ok: true, value: val, repaired: true };
       } catch (e2) {
+        currentTelemetry()?.recordMalformedJsonRepair();
         return { ok: false, repaired: true, error: (e2 as Error).message };
       }
     }
+    if (repaired) currentTelemetry()?.recordMalformedJsonRepair();
     return { ok: false, repaired, error: (e as Error).message };
   }
 }

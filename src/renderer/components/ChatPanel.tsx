@@ -7,6 +7,7 @@ import type {
   JobMode,
   LaneExhaustedDetail,
   ProviderKeyId,
+  RunStats,
   UserQuestionResponse,
 } from "../../shared/electron-api-types";
 import { estimateRun, INTENT_LABELS, INTENT_OPTIONS, routeIntent } from "../../shared/intent";
@@ -799,6 +800,7 @@ function MessageRow({
         </div>
         {m.files && m.files.length > 0 && <FilesCard files={m.files} />}
         <ActionRow m={m} onAction={onAction} />
+        {m.runStats && <RunStatsLine stats={m.runStats} />}
       </div>
     );
   }
@@ -817,6 +819,7 @@ function MessageRow({
         <Markdown text={m.text} />
         {m.laneDetails && m.laneDetails.length > 0 && <ExhaustedLanesCard details={m.laneDetails} />}
         <ActionRow m={m} onAction={onAction} />
+        {m.runStats && <RunStatsLine stats={m.runStats} />}
       </div>
     );
   }
@@ -837,6 +840,7 @@ function MessageRow({
       )}
       {m.files && m.files.length > 0 && <FilesCard files={m.files} />}
       <ActionRow m={m} onAction={onAction} />
+      {m.runStats && <RunStatsLine stats={m.runStats} />}
     </div>
   );
 }
@@ -902,6 +906,47 @@ function ActionButton({
     >
       {a.label}
     </button>
+  );
+}
+
+function RunStatsLine({ stats }: { stats: RunStats }) {
+  const totalTokens = stats.inputTokens + stats.outputTokens;
+  const fmtTok = (n: number) =>
+    n >= 1_000_000 ? `${(n / 1_000_000).toFixed(2)}M` : n >= 1_000 ? `${(n / 1_000).toFixed(1)}k` : `${n}`;
+  const callWord = stats.modelCalls === 1 ? "call" : "calls";
+  const retryWord = stats.retries === 1 ? "retry" : "retries";
+  const secs = (stats.wallTimeMs / 1000).toFixed(1);
+  const details = [
+    `Input: ${stats.inputTokens} tok`,
+    `Output: ${stats.outputTokens} tok`,
+    `Tools: ${stats.toolCallsExecuted}`,
+    `Retries (429/5xx/413): ${stats.retries429}/${stats.retries5xx}/${stats.retries413}`,
+    `Dead lanes: ${stats.deadLaneEvents}`,
+    `JSON repairs: ${stats.malformedJsonRepairs}`,
+    `Failed edits: ${stats.failedEditFileAttempts}`,
+  ].join(" · ");
+
+  return (
+    <div
+      data-run-stats
+      title={details}
+      className="mt-1.5 flex flex-wrap items-center gap-1.5 border-t border-[var(--color-border)]/50 pt-1 font-mono text-[10px] text-[var(--color-muted)]"
+    >
+      <span className="uppercase tracking-wide text-[var(--color-muted)]/80">Run stats:</span>
+      <span className="text-[var(--color-text)]">
+        {stats.modelCalls} {callWord}, {fmtTok(totalTokens)} tokens, {stats.retries} {retryWord}
+      </span>
+      {stats.toolCallsExecuted > 0 && (
+        <span>· {stats.toolCallsExecuted} tool{stats.toolCallsExecuted === 1 ? "" : "s"}</span>
+      )}
+      {stats.verificationPassed === true && (
+        <span className="text-[var(--color-positive)]">· verified ✓</span>
+      )}
+      {stats.verificationPassed === false && (
+        <span className="text-[var(--color-warn)]">· verify failed ✗</span>
+      )}
+      <span className="ml-auto">{secs}s</span>
+    </div>
   );
 }
 

@@ -3,6 +3,7 @@ import path from "path";
 import { spawn } from "child_process";
 import log from "electron-log";
 import { verifyWebsite, type VerifyReport } from "../quality/verifier";
+import { currentTelemetry } from "../telemetry";
 import type { UserQuestionOption } from "../../shared/electron-api-types";
 
 // FR-5.2: the agent tool set. Every tool runs in the main process. Paths stay
@@ -244,8 +245,12 @@ export const TOOLS: ToolSpec[] = [
       if (!fs.existsSync(abs)) return { ok: false, output: `No such file: ${rel}. Read it first, then edit.` };
       const text = fs.readFileSync(abs, "utf8");
       const first = text.indexOf(find);
-      if (first === -1) return { ok: false, output: `The text to replace was not found in ${rel}. Read the file and copy the exact text.` };
+      if (first === -1) {
+        currentTelemetry()?.recordFailedEditFile();
+        return { ok: false, output: `The text to replace was not found in ${rel}. Read the file and copy the exact text.` };
+      }
       if (text.indexOf(find, first + find.length) !== -1) {
+        currentTelemetry()?.recordFailedEditFile();
         return { ok: false, output: `The text to replace appears more than once in ${rel}. Include more surrounding text.` };
       }
       backupIfExists(ctx.state.workspaceRoot, abs, rel);
@@ -425,6 +430,9 @@ export const TOOLS: ToolSpec[] = [
         outDir: path.join(ctx.state.myideDir, "verify"),
       });
       ctx.state.lastVerify = report;
+      if (report.verified) {
+        currentTelemetry()?.recordVerification(report.ok);
+      }
       if (report.ok && report.verified) ctx.state.verifyPassedSinceChange = true;
       return {
         ok: report.ok,

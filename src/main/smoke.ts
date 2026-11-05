@@ -1,6 +1,7 @@
 import fs from "fs";
 import type { BrowserWindow } from "electron";
 import type { AIService } from "./ai/service";
+import { setLayout } from "./ui/layout-store";
 import { traceLines } from "./trace";
 
 // PART 1 / PART 5 test harness. When MYIDE_SMOKE=1 the app boots with a
@@ -63,6 +64,9 @@ export function makeSmokeAI(scenario: SmokeScenario): AIService {
 }
 
 export async function runSmoke(win: BrowserWindow, scenario: SmokeScenario, verifyDir: string): Promise<void> {
+  // Ensure the IDE starts in Editor view with the Agent Chat panel open even if a
+  // previous manual session persisted Mission Control mode in layout.json.
+  setLayout({ appMode: "editor", agentPanelOpen: true });
   const wc = win.webContents;
   const kind = smokeKind();
   const lines: string[] = [];
@@ -168,6 +172,14 @@ export async function runSmoke(win: BrowserWindow, scenario: SmokeScenario, veri
       await sleep(1000);
     }
     await sleep(1000); // let React mount and subscribe to the event stream
+
+    // Ensure Editor mode is active in the UI if layout hydration switched modes.
+    await wc.executeJavaScript(`(() => {
+      const editorBtn = document.querySelector('[data-mode-btn="editor"]')
+        || [...document.querySelectorAll('button')].find((x) => x.textContent.trim() === 'Editor');
+      if (editorBtn && !document.querySelector('textarea')) editorBtn.click();
+    })()`);
+    await sleep(250);
 
     // Start each scenario from a clean chat ("New chat"), so a previous run's
     // saved history cannot be mistaken for this run's messages.

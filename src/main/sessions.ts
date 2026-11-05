@@ -47,14 +47,17 @@ function summarizeMessages(msgs: ChatMessage[]): {
   lastModel?: string;
   lastPreview?: string;
   lastStatus: ChatSessionMeta["lastStatus"];
+  lastRunStats?: ChatSessionMeta["lastRunStats"];
 } {
   let lastModel: string | undefined;
   let lastPreview: string | undefined;
+  let lastRunStats: ChatSessionMeta["lastRunStats"];
   let hasPendingQuestion = false;
   let lastError = false;
   for (let i = msgs.length - 1; i >= 0; i--) {
     const m = msgs[i];
     if (!lastModel && m.model) lastModel = m.model;
+    if (!lastRunStats && m.runStats) lastRunStats = m.runStats;
     if (!lastPreview && (m.role === "assistant" || m.role === "user" || m.role === "error") && m.text.trim()) {
       const clean = m.text.trim().replace(/\s+/g, " ");
       lastPreview = clean.length > 100 ? `${clean.slice(0, 100)}…` : clean;
@@ -67,7 +70,7 @@ function summarizeMessages(msgs: ChatMessage[]): {
   if (tail?.role === "error") lastError = true;
   const lastStatus: ChatSessionMeta["lastStatus"] =
     msgs.length === 0 ? "idle" : hasPendingQuestion ? "waiting" : lastError ? "failed" : "done";
-  return { lastModel, lastPreview, lastStatus };
+  return { lastModel, lastPreview, lastStatus, lastRunStats };
 }
 
 export class SessionStore {
@@ -279,6 +282,7 @@ export class SessionStore {
       fs.mkdirSync(dir, { recursive: true });
       const f = sessionFilePath(this.activeId);
       const tmp = `${f}.tmp`;
+      const summary = summarizeMessages(this.activeMessages);
       const payload: StoredChatSession = {
         version: 1,
         id: this.activeId,
@@ -287,6 +291,7 @@ export class SessionStore {
         updatedAt: Date.now(),
         messageCount: this.activeMessages.length,
         workspaceRoot: this.activeWorkspaceRoot || undefined,
+        ...summary,
         messages: this.activeMessages,
       };
       fs.writeFileSync(tmp, JSON.stringify(payload, null, 2), "utf8");

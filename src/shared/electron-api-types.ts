@@ -88,6 +88,25 @@ export interface ChangedFile {
   path: string;
   change: "created" | "edited" | "deleted";
   bytes: number;
+  addedLines?: number;
+  removedLines?: number;
+}
+
+export interface RunStats {
+  runId: string;
+  modelCalls: number;
+  inputTokens: number;
+  outputTokens: number;
+  retries: number;
+  retries429: number;
+  retries5xx: number;
+  retries413: number;
+  deadLaneEvents: number;
+  malformedJsonRepairs: number;
+  failedEditFileAttempts: number;
+  toolCallsExecuted: number;
+  wallTimeMs: number;
+  verificationPassed: boolean | null;
 }
 
 // PART 3: popup questions (ask_user tool).
@@ -136,6 +155,7 @@ export interface ChatSessionMeta {
   lastModel?: string;
   lastPreview?: string;
   lastStatus?: "idle" | "running" | "waiting" | "done" | "failed";
+  lastRunStats?: RunStats;
 }
 
 // Nova IDE Shell & Persisted Layout (<userData>/layout.json)
@@ -202,6 +222,8 @@ export interface ChatMessage {
   userQuestion?: UserQuestionRecord;
   // A run that changed files attaches the list here (PART 3 point 3).
   files?: ChangedFile[];
+  // Per-run telemetry summary persisted in session JSON (PHASE 0).
+  runStats?: RunStats;
   action?: ChatAction;
   actions?: ChatAction[];
 }
@@ -250,6 +272,7 @@ export type ChatEvent = { runId: string } & (
   | { type: "preview"; path: string }
   | { type: "open-file"; path: string }
   | { type: "workspace"; path: string; created: boolean; isDefault: boolean }
+  | { type: "run-stats"; stats: RunStats }
   | { type: "done"; summary: string }
   | { type: "error"; text: string; msgId?: string }
 );
@@ -276,6 +299,7 @@ export interface JobSnapshot {
   paused: { reason: string; options: string[] } | null;
   waiting: { lane: string; resumeAtMs: number | null } | null;
   result: { score?: number; ok?: boolean; files?: string[] } | null;
+  runStats?: RunStats | null;
 }
 
 export interface InterruptedRun {
